@@ -1,0 +1,5 @@
+/dist/
+/mysql-explorer
+/config.toml
+.env
+.env.*

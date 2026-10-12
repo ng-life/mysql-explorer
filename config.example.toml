@@ -1,0 +1,7 @@
+listen = "127.0.0.1:18084"
+
+[[clusters]]
+name = "本地 MySQL"
+address = "127.0.0.1:3306"
+user = "readonly"
+password_env = "MYSQL_EXPLORER_PASSWORD"

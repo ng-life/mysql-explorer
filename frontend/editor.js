@@ -7,7 +7,12 @@ import {
   highlightActiveLine,
   drawSelection,
 } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  isolateHistory,
+} from "@codemirror/commands";
 import {
   syntaxHighlighting,
   defaultHighlightStyle,

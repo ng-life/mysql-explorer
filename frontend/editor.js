@@ -1,3 +1,4 @@
+import { format } from "sql-formatter";
 import { EditorState, Compartment } from "@codemirror/state";
 import {
   EditorView,
@@ -100,6 +101,23 @@ window.createSQLEditor = (parent, execute) => {
       view.dispatch({
         effects: editable.reconfigure(EditorView.editable.of(!value)),
       });
+    },
+    format() {
+      const text = view.state.doc.toString();
+      if (!text.trim()) return;
+      const formatted = format(text, {
+        language: "mysql",
+        keywordCase: "upper",
+        tabWidth: 2,
+      });
+      if (formatted !== text) {
+        // A single editor transaction keeps formatting undoable.
+        view.dispatch({
+          annotations: isolateHistory.of("full"),
+          changes: { from: 0, to: view.state.doc.length, insert: formatted },
+        });
+      }
+      view.focus();
     },
     setSchema(schema, database, table) {
       view.dispatch({

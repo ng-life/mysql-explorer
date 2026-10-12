@@ -617,6 +617,9 @@
                 <option>200</option>
               </select>
             </div>
+            <button id="formatSQL" type="button" class="button" disabled>
+              格式化
+            </button>
             <button id="resetQuery" type="button" class="button" disabled>
               重置 SQL</button
             ><button id="runQuery" class="button primary" disabled>
@@ -696,7 +699,7 @@
       }
       function enableQuery(enabled) {
         sqlEditor.disabled = !enabled;
-        for (const id of ["limit", "resetQuery", "runQuery"])
+        for (const id of ["limit", "formatSQL", "resetQuery", "runQuery"])
           $(id).disabled = !enabled;
       }
       function clearResults(message = "选择表，或输入 SQL 执行查询") {
@@ -969,6 +972,14 @@
       $("queryForm").onsubmit = (e) => {
         e.preventDefault();
         query(true);
+      };
+      $("formatSQL").onclick = () => {
+        try {
+          sqlEditor.format();
+          showError("");
+        } catch {
+          showError("SQL 格式化失败，请检查语法；编辑器内容已保留。");
+        }
       };
       $("resetQuery").onclick = () => {
         sqlEditor.value = defaultSQL();

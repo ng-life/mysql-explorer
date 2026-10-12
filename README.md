@@ -3,6 +3,7 @@
 轻量 Go MySQL 只读浏览器，参考 [Mongo Explorer](https://github.com/ng-life/mongo-explorer) 的界面与按需加载方式。
 
 - 切换服务，展开数据库后加载表与视图。
+- 「格式化」按钮整理当前 SQL 的缩进、换行和关键字大小写，支持撤销，不触发查询。
 - CodeMirror 6 提供 SQL 高亮、关键字补全、已加载表名和选中表字段补全；Ctrl+Space 手动补全，Ctrl/⌘+Enter 执行。
 - 选中表时填入 `SELECT * FROM db_name.table_name`，支持编辑 SQL、分页和快捷键执行。
 - 查询结果使用动态列，优先显示来源字段备注，无备注则显示结果字段名。

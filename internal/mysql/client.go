@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,12 +31,21 @@ type Result struct {
 	HasMore bool     `json:"has_more"`
 }
 type Reader interface {
+	RefreshTables(context.Context, string) ([]string, error)
+	RefreshColumns(context.Context, string, string) ([]Column, error)
+	Metadata() *Catalog
+	Refresh(context.Context) (*Catalog, error)
 	Databases(context.Context) ([]string, error)
 	Tables(context.Context, string) ([]string, error)
 	Schema(context.Context, string, string) ([]Column, error)
 	Execute(context.Context, string, Query) (Result, error)
 }
-type Client struct{ DB *sql.DB }
+type Client struct {
+	DB        *sql.DB
+	catalogMu sync.RWMutex
+	refreshMu sync.Mutex
+	catalog   *Catalog
+}
 type Pool struct {
 	mu       sync.Mutex
 	clusters []config.Cluster
@@ -98,12 +108,33 @@ func list(ctx context.Context, db *sql.DB, statement string, args ...any) ([]str
 	return out, rows.Err()
 }
 func (c *Client) Databases(ctx context.Context) ([]string, error) {
+	if catalog := c.Metadata(); catalog != nil {
+		return catalog.Databases, nil
+	}
 	return list(ctx, c.DB, "SHOW DATABASES")
 }
 func (c *Client) Tables(ctx context.Context, db string) ([]string, error) {
+	if catalog := c.Metadata(); catalog != nil {
+		names := []string{}
+		for name := range catalog.Schemas[db] {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names, nil
+	}
 	return list(ctx, c.DB, "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME", db)
 }
 func (c *Client) columns(ctx context.Context, db, table string) ([]Column, error) {
+	if catalog := c.Metadata(); catalog != nil {
+		columns := catalog.Schemas[db][table]
+		if columns == nil {
+			columns = []Column{}
+		}
+		return columns, nil
+	}
+	return c.liveColumns(ctx, db, table)
+}
+func (c *Client) liveColumns(ctx context.Context, db, table string) ([]Column, error) {
 	rows, err := c.DB.QueryContext(ctx, "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION", db, table)
 	if err != nil {
 		return nil, err

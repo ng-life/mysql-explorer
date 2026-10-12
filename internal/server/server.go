@@ -51,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 		respond(w, out)
 	})
 	mux.HandleFunc("GET /api/clusters/{id}/databases", s.databases)
+	mux.HandleFunc("GET /api/clusters/{id}/metadata", s.metadata)
+	mux.HandleFunc("POST /api/clusters/{id}/metadata/refresh", s.refreshMetadata)
 	mux.HandleFunc("GET /api/clusters/{id}/tables", s.tables)
 	mux.HandleFunc("GET /api/clusters/{id}/columns", s.columns)
 	mux.HandleFunc("POST /api/clusters/{id}/rows/query", s.rows)
@@ -99,7 +101,7 @@ func (s *Server) tables(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	names, err := client.Tables(r.Context(), db)
+	names, err := client.RefreshTables(r.Context(), db)
 	if err != nil {
 		http.Error(w, "无法读取 表列表，请检查访问权限", 502)
 		return
@@ -172,10 +174,38 @@ func (s *Server) columns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	columns, err := client.Schema(r.Context(), db, table)
+	columns, err := client.RefreshColumns(r.Context(), db, table)
 	if err != nil {
 		http.Error(w, "无法读取字段信息", 502)
 		return
 	}
 	respond(w, map[string]any{"columns": columns})
+}
+
+func (s *Server) metadata(w http.ResponseWriter, r *http.Request) {
+	client, ok := s.reader(w, r)
+	if !ok {
+		return
+	}
+	catalog := client.Metadata()
+	if catalog == nil {
+		http.Error(w, "服务元数据未加载，请刷新重试", 503)
+		return
+	}
+	respond(w, catalog)
+}
+func (s *Server) refreshMetadata(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	client, ok := s.reader(w, r)
+	if !ok {
+		return
+	}
+	catalog, err := client.Refresh(ctx)
+	if err != nil {
+		http.Error(w, "元数据加载失败，已有缓存保持不变，请检查连接和权限", 502)
+		return
+	}
+	respond(w, catalog)
 }

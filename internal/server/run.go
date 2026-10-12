@@ -14,6 +14,10 @@ import (
 func Run(ctx context.Context, c config.Config) error {
 	pool := mysql.NewPool(c.Clusters)
 	defer pool.Close()
+	pool.Preload(ctx)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	listener, err := net.Listen("tcp", c.Listen)
 	if err != nil {
 		return err

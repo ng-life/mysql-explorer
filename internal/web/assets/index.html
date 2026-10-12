@@ -683,7 +683,8 @@
         lastQuery = null,
         hasMore = false,
         loading = false,
-        treeToken = 0;
+        treeToken = 0,
+        selectionToken = 0;
       function status(text, state = "") {
         $("status").textContent = text;
         $("status").className = "status " + state;
@@ -757,17 +758,35 @@
         $("refreshTree").disabled = false;
         loadDatabases();
       }
-      async function loadDatabases() {
+      async function loadDatabases(refresh = false) {
         const current = epoch,
           id = active,
           token = ++treeToken;
         $("tree").innerHTML = '<div class="tree-state">正在加载数据库…</div>';
         status("正在读取", "busy");
         try {
-          const out = await api(`/api/clusters/${id}/databases`);
+          const out = await api(
+            refresh
+              ? `/api/clusters/${id}/metadata/refresh`
+              : `/api/clusters/${id}/metadata`,
+            refresh ? { method: "POST" } : {},
+          );
           if (current !== epoch || token !== treeToken) return;
           databases = out.databases;
           dbStates = new Map();
+          schema = Object.create(null);
+          for (const db of databases) {
+            schema[db] = Object.create(null);
+            const tables = Object.keys(out.schemas[db] || {}).sort();
+            dbStates.set(db, { open: false, loading: false, tables });
+            for (const name of tables)
+              schema[db][name] = out.schemas[db][name].map((c) => ({
+                label: c.name,
+                type: "property",
+                detail: c.comment || c.type,
+              }));
+          }
+          updateCompletion();
           renderTree();
           status("连接正常");
         } catch (e) {
@@ -818,9 +837,11 @@
           state = { open: true, loading: true, tables: [] };
           dbStates.set(db, state);
           fetchTables(db);
-        } else {
-          state.open = !state.open;
+        } else if (state.open) {
+          state.open = false;
           renderTree();
+        } else {
+          fetchTables(db);
         }
       }
       async function fetchTables(db) {
@@ -837,8 +858,10 @@
           );
           if (current !== epoch || dbStates.get(db) !== state) return;
           state.tables = out.tables;
-          schema[db] ||= Object.create(null);
-          for (const name of out.tables) schema[db][name] ||= [];
+          const previous = schema[db] || Object.create(null);
+          schema[db] = Object.create(null);
+          for (const name of out.tables)
+            schema[db][name] = previous[name] || [];
           updateCompletion();
         } catch (e) {
           if (current !== epoch || dbStates.get(db) !== state) return;
@@ -862,35 +885,60 @@
       function updateCompletion() {
         sqlEditor.setSchema(schema, database, table);
       }
-      async function loadEditorColumns(db, name) {
+      async function loadEditorColumns(db, name, selection) {
         const current = epoch;
         try {
           const out = await api(
             `/api/clusters/${active}/columns?db=${encodeURIComponent(db)}&table=${encodeURIComponent(name)}`,
           );
-          if (current !== epoch) return;
+          if (current !== epoch || selection !== selectionToken) return false;
           schema[db] ||= Object.create(null);
+          if (!out.columns.length) {
+            delete schema[db][name];
+            const state = dbStates.get(db);
+            if (state) state.tables = state.tables.filter((t) => t !== name);
+            updateCompletion();
+            renderTree();
+            showError("表已删除或无法读取字段，请刷新数据库后重试。");
+            return false;
+          }
           schema[db][name] = out.columns.map((c) => ({
             label: c.name,
             type: "property",
             detail: c.comment || c.type,
           }));
           updateCompletion();
-        } catch {
-          /* Keyword and table completion stay available when metadata cannot be read. */
+          return true;
+        } catch (e) {
+          if (current === epoch && selection === selectionToken)
+            showError(e.message);
+          return false;
         }
       }
-      function chooseTable(db, name) {
+      async function chooseTable(db, name) {
         database = db;
         table = name;
         lastQuery = null;
         sqlEditor.value = defaultSQL();
+        const initialSQL = sqlEditor.value;
         updateCompletion();
-        loadEditorColumns(db, name);
+        const selection = ++selectionToken;
+        const current = epoch;
         $("namespace").textContent = `${db}.${name}`;
         enableQuery(true);
+        const queryVersion = ++queryToken;
+        if (queryController) queryController.abort();
+        clearResults("正在检查字段更新…");
         renderTree();
-        query(true);
+        const loaded = await loadEditorColumns(db, name, selection);
+        if (
+          loaded &&
+          current === epoch &&
+          selection === selectionToken &&
+          queryVersion === queryToken &&
+          sqlEditor.value === initialSQL
+        )
+          query(true);
       }
       async function query(fresh, skip = 0) {
         if (active < 0) return;
@@ -1002,7 +1050,7 @@
         clearResults();
         $("namespace").textContent = "选择数据库或表";
         showError("");
-        loadDatabases();
+        loadDatabases(true);
       };
       init();
     </script>

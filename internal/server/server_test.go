@@ -20,7 +20,7 @@ func (fake) Execute(context.Context, string, mysql.Query) (mysql.Result, error) 
 }
 func TestReadOnlyHTTP(t *testing.T) {
 	h := New(config.Config{Clusters: []config.Cluster{{Name: "test", Address: "localhost:3306", User: "private-user", Password: "private-password"}}}, fake{}).Handler()
-	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop", "/api/clusters/0/columns?db=shop&table=orders", "/assets/editor.js"} {
+	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop", "/api/clusters/0/columns?db=shop&table=orders", "/assets/editor.js", "/api/clusters/0/metadata"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || strings.Contains(w.Body.String(), "private-password") || strings.Contains(w.Body.String(), "private-user") {
@@ -49,4 +49,16 @@ func TestReadOnlyHTTP(t *testing.T) {
 
 func (fake) Schema(context.Context, string, string) ([]mysql.Column, error) {
 	return []mysql.Column{{Name: "id", Comment: "编号"}}, nil
+}
+
+func (fake) Metadata() *mysql.Catalog {
+	return &mysql.Catalog{Databases: []string{"shop"}, Schemas: map[string]map[string][]mysql.Column{"shop": {"orders": {{Name: "id"}}}}}
+}
+func (f fake) Refresh(context.Context) (*mysql.Catalog, error) { return f.Metadata(), nil }
+
+func (f fake) RefreshTables(ctx context.Context, db string) ([]string, error) {
+	return f.Tables(ctx, db)
+}
+func (f fake) RefreshColumns(ctx context.Context, db, table string) ([]mysql.Column, error) {
+	return f.Schema(ctx, db, table)
 }

@@ -1,7 +1,10 @@
 GO ?= go
 COMMAND := ./cmd/mysql-explorer
 
-.PHONY: build run test vet fmt check
+.PHONY: build run test vet fmt check web
+web:
+	pnpm install --frozen-lockfile
+	pnpm build
 build:
 	$(GO) build -trimpath -o dist/mysql-explorer $(COMMAND)
 run:

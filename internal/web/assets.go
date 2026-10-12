@@ -1,8 +1,10 @@
 package web
 
-import _ "embed"
+import "embed"
 
-// IndexHTML is embedded so releases need no separate static directory.
+// Assets includes the editor bundle so deployed browsers need no external CDN.
 //
-//go:embed assets/index.html
-var IndexHTML []byte
+//go:embed assets/*
+var Assets embed.FS
+
+var IndexHTML, _ = Assets.ReadFile("assets/index.html")

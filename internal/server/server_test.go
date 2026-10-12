@@ -20,7 +20,7 @@ func (fake) Execute(context.Context, string, mysql.Query) (mysql.Result, error) 
 }
 func TestReadOnlyHTTP(t *testing.T) {
 	h := New(config.Config{Clusters: []config.Cluster{{Name: "test", Address: "localhost:3306", User: "private-user", Password: "private-password"}}}, fake{}).Handler()
-	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop"} {
+	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop", "/api/clusters/0/columns?db=shop&table=orders", "/assets/editor.js"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || strings.Contains(w.Body.String(), "private-password") || strings.Contains(w.Body.String(), "private-user") {
@@ -45,4 +45,8 @@ func TestReadOnlyHTTP(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatal(w.Code)
 	}
+}
+
+func (fake) Schema(context.Context, string, string) ([]mysql.Column, error) {
+	return []mysql.Column{{Name: "id", Comment: "编号"}}, nil
 }

@@ -32,6 +32,7 @@ type Result struct {
 type Reader interface {
 	Databases(context.Context) ([]string, error)
 	Tables(context.Context, string) ([]string, error)
+	Schema(context.Context, string, string) ([]Column, error)
 	Execute(context.Context, string, Query) (Result, error)
 }
 type Client struct{ DB *sql.DB }
@@ -123,3 +124,8 @@ func (c *Client) columns(ctx context.Context, db, table string) ([]Column, error
 
 // quoteIdentifier handles MySQL identifiers independently from parameter values.
 func quoteIdentifier(s string) string { return "`" + strings.ReplaceAll(s, "`", "``") + "`" }
+
+// Schema loads columns for editor completion without querying table data.
+func (c *Client) Schema(ctx context.Context, database, table string) ([]Column, error) {
+	return c.columns(ctx, database, table)
+}

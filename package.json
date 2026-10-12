@@ -1,0 +1,19 @@
+{
+  "name": "mysql-explorer-web",
+  "private": true,
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "build": "esbuild frontend/editor.js --bundle --minify --format=iife --target=es2020 --legal-comments=linked --outfile=internal/web/assets/editor.js"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.0.0",
+    "@codemirror/commands": "^6.0.0",
+    "@codemirror/lang-sql": "^6.0.0",
+    "@codemirror/language": "^6.0.0",
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

@@ -34,6 +34,7 @@ func respond(w http.ResponseWriter, v any) {
 // Handler returns the browser and read-only API routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("GET /assets/", http.FileServerFS(web.Assets))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(web.IndexHTML)
@@ -51,6 +52,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/clusters/{id}/databases", s.databases)
 	mux.HandleFunc("GET /api/clusters/{id}/tables", s.tables)
+	mux.HandleFunc("GET /api/clusters/{id}/columns", s.columns)
 	mux.HandleFunc("POST /api/clusters/{id}/rows/query", s.rows)
 	return mux
 }
@@ -156,4 +158,24 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, out)
+}
+
+func (s *Server) columns(w http.ResponseWriter, r *http.Request) {
+	db, table := r.URL.Query().Get("db"), r.URL.Query().Get("table")
+	if !validName(db) || !validName(table) {
+		http.Error(w, "请选择数据库和表", 400)
+		return
+	}
+	r, cancel := bounded(r)
+	defer cancel()
+	client, ok := s.reader(w, r)
+	if !ok {
+		return
+	}
+	columns, err := client.Schema(r.Context(), db, table)
+	if err != nil {
+		http.Error(w, "无法读取字段信息", 502)
+		return
+	}
+	respond(w, map[string]any{"columns": columns})
 }

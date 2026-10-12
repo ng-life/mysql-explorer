@@ -605,15 +605,8 @@
           <div class="panel-title">
             SQL 查询<span id="namespace" class="namespace">选择数据库或表</span>
           </div>
-          <label for="sql" class="label">SQL · SELECT</label
-          ><textarea
-            id="sql"
-            class="editor"
-            style="height: 150px"
-            spellcheck="false"
-            placeholder="SELECT * FROM db_name.table_name"
-            disabled
-          ></textarea>
+          <label for="sql-input" class="label">SQL · SELECT</label>
+          <div id="sql"></div>
           <div class="query-options">
             <div>
               <label for="limit" class="label">每页条数</label
@@ -656,6 +649,7 @@
         </div>
       </main>
     </div>
+    <script src="/assets/editor.js"></script>
     <script>
       const $ = (id) => document.getElementById(id),
         esc = (s) =>
@@ -670,6 +664,8 @@
                 "'": "&#39;",
               })[c],
           );
+      const sqlEditor = window.createSQLEditor($("sql"), () => query(true));
+      let schema = Object.create(null);
       let clusters = [],
         active = -1,
         databases = [],
@@ -699,7 +695,8 @@
         return r.json();
       }
       function enableQuery(enabled) {
-        for (const id of ["sql", "limit", "resetQuery", "runQuery"])
+        sqlEditor.disabled = !enabled;
+        for (const id of ["limit", "resetQuery", "runQuery"])
           $(id).disabled = !enabled;
       }
       function clearResults(message = "选择表，或输入 SQL 执行查询") {
@@ -741,11 +738,13 @@
         database = "";
         table = "";
         dbStates = new Map();
+        schema = Object.create(null);
+        updateCompletion();
         lastQuery = null;
         enableQuery(true);
         clearResults();
         showError("");
-        $("sql").value = "";
+        sqlEditor.value = "";
         $("namespace").textContent = "选择数据库或表";
         $("title").textContent = clusters[id].name;
         $("subtitle").textContent = clusters[id].address;
@@ -808,6 +807,7 @@
       function toggleDatabase(db) {
         if (database !== db) table = "";
         database = db;
+        updateCompletion();
         $("namespace").textContent = db;
         enableQuery(true);
         let state = dbStates.get(db);
@@ -834,6 +834,9 @@
           );
           if (current !== epoch || dbStates.get(db) !== state) return;
           state.tables = out.tables;
+          schema[db] ||= Object.create(null);
+          for (const name of out.tables) schema[db][name] ||= [];
+          updateCompletion();
         } catch (e) {
           if (current !== epoch || dbStates.get(db) !== state) return;
           state.error = true;
@@ -853,11 +856,34 @@
           ? `SELECT * FROM ${quoteName(database)}.${quoteName(table)}`
           : "";
       }
+      function updateCompletion() {
+        sqlEditor.setSchema(schema, database, table);
+      }
+      async function loadEditorColumns(db, name) {
+        const current = epoch;
+        try {
+          const out = await api(
+            `/api/clusters/${active}/columns?db=${encodeURIComponent(db)}&table=${encodeURIComponent(name)}`,
+          );
+          if (current !== epoch) return;
+          schema[db] ||= Object.create(null);
+          schema[db][name] = out.columns.map((c) => ({
+            label: c.name,
+            type: "property",
+            detail: c.comment || c.type,
+          }));
+          updateCompletion();
+        } catch {
+          /* Keyword and table completion stay available when metadata cannot be read. */
+        }
+      }
       function chooseTable(db, name) {
         database = db;
         table = name;
         lastQuery = null;
-        $("sql").value = defaultSQL();
+        sqlEditor.value = defaultSQL();
+        updateCompletion();
+        loadEditorColumns(db, name);
         $("namespace").textContent = `${db}.${name}`;
         enableQuery(true);
         renderTree();
@@ -868,7 +894,7 @@
         const payload = fresh
           ? {
               database,
-              sql: $("sql").value,
+              sql: sqlEditor.value,
               limit: Number($("limit").value),
               skip: 0,
             }
@@ -944,14 +970,8 @@
         e.preventDefault();
         query(true);
       };
-      $("sql").onkeydown = (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          e.preventDefault();
-          query(true);
-        }
-      };
       $("resetQuery").onclick = () => {
-        $("sql").value = defaultSQL();
+        sqlEditor.value = defaultSQL();
       };
       $("prevPage").onclick = () => {
         if (!loading && lastQuery)

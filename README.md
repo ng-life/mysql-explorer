@@ -3,6 +3,7 @@
 轻量 Go MySQL 只读浏览器，参考 [Mongo Explorer](https://github.com/ng-life/mongo-explorer) 的界面与按需加载方式。
 
 - 切换服务，展开数据库后加载表与视图。
+- CodeMirror 6 提供 SQL 高亮、关键字补全、已加载表名和选中表字段补全；Ctrl+Space 手动补全，Ctrl/⌘+Enter 执行。
 - 选中表时填入 `SELECT * FROM db_name.table_name`，支持编辑 SQL、分页和快捷键执行。
 - 查询结果使用动态列，优先显示来源字段备注，无备注则显示结果字段名。
 - 支持普通 SELECT、WHERE、ORDER BY、聚合及 JOIN；表别名和字段别名按 SQL 投影位置映射。
@@ -18,7 +19,7 @@ export MYSQL_EXPLORER_PASSWORD='your-password'
 go run ./cmd/mysql-explorer --config config.toml
 ```
 
-打开 <http://127.0.0.1:18084>。默认监听回环地址；HTML 嵌入可执行文件，无需 Node.js 或额外静态资源。
+打开 <http://127.0.0.1:18084>。默认监听回环地址；HTML 嵌入可执行文件，运行无需 Node.js 或额外静态资源，CodeMirror 及其依赖已打包并嵌入程序。
 
 ```toml
 listen = "127.0.0.1:18084"
@@ -55,6 +56,16 @@ SQL 使用 AST 校验，只接收单条 SELECT。常用聚合、字符串、日�
 每页最多 200 条，自动设置 LIMIT/OFFSET，多读一条判断下一页。原 SQL 的 LIMIT 是结果总数上限，分页保留原 OFFSET；翻页使用已执行的 SQL，修改编辑框后需点击执行查询。无 ORDER BY 时不保证结果顺序，并发变化时不保证跨页快照一致。偏移量上限 1000000，请求超时 12 秒，每页行内容上限 32 MiB；单个大字段仍需先由驱动读取。
 
 整数与 DECIMAL 以字符串返回，防止浏览器丢失精度。NULL 单独显示，二进制显示 Base64，日期时间保留数据库文本格式。服务器需要支持只读事务。
+
+## 编辑器开发
+
+修改 `frontend/editor.js` 后使用 Node.js 24 和 pnpm 重新构建：
+
+```sh
+make web
+```
+
+编辑器源代码、依赖锁文件和生成的 bundle 都提交到仓库。发布 CI 会重建并检查 bundle 一致性；浏览器无需访问外部 CDN。字段补全按选中表读取元数据，不扫描表数据。
 
 ## 验证与发布
 

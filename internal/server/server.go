@@ -109,48 +109,12 @@ func validName(name string) bool {
 }
 
 type queryRequest struct {
-	Database string          `json:"database"`
-	Table    string          `json:"table"`
-	Filter   json.RawMessage `json:"filter"`
-	Sort     json.RawMessage `json:"sort"`
-	Limit    int64           `json:"limit"`
-	Skip     int64           `json:"skip"`
+	Database string `json:"database"`
+	SQL      string `json:"sql"`
+	Limit    int    `json:"limit"`
+	Skip     int    `json:"skip"`
 }
 
-func parseQuery(in queryRequest) (mysql.Query, error) {
-	q := mysql.Query{Limit: int(in.Limit), Skip: int(in.Skip), Filter: map[string]any{}, Sort: map[string]int{}}
-	if q.Limit == 0 {
-		q.Limit = 20
-	}
-	if in.Limit < 0 || in.Limit > 200 || in.Skip < 0 || in.Skip > 1000000 {
-		return q, io.ErrUnexpectedEOF
-	}
-	if len(in.Filter) != 0 {
-		decoder := json.NewDecoder(strings.NewReader(string(in.Filter)))
-		decoder.UseNumber()
-		if err := decoder.Decode(&q.Filter); err != nil || q.Filter == nil {
-			return q, io.ErrUnexpectedEOF
-		}
-	}
-	if len(in.Sort) != 0 {
-		if err := json.Unmarshal(in.Sort, &q.Sort); err != nil || q.Sort == nil {
-			return q, io.ErrUnexpectedEOF
-		}
-	}
-	for _, value := range q.Filter {
-		switch value.(type) {
-		case nil, string, bool, json.Number:
-		default:
-			return q, io.ErrUnexpectedEOF
-		}
-	}
-	for _, direction := range q.Sort {
-		if direction != 1 && direction != -1 {
-			return q, io.ErrUnexpectedEOF
-		}
-	}
-	return q, nil
-}
 func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
 	defer r.Body.Close()
@@ -165,13 +129,19 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请求只能包含一个 JSON 对象", 400)
 		return
 	}
-	if !validName(in.Database) || !validName(in.Table) {
-		http.Error(w, "请选择数据库和表", 400)
+	if in.Database != "" && !validName(in.Database) {
+		http.Error(w, "数据库名称无效", 400)
 		return
 	}
-	q, err := parseQuery(in)
-	if err != nil {
-		http.Error(w, "筛选和排序必须是 JSON 对象；每页 1–200 条，偏移量 0–1000000", 400)
+	if in.Limit == 0 {
+		in.Limit = 20
+	}
+	if in.Limit < 1 || in.Limit > 200 || in.Skip < 0 || in.Skip > 1000000 {
+		http.Error(w, "每页 1–200 条，偏移量 0–1000000", 400)
+		return
+	}
+	if _, err := mysql.ParseSQL(in.SQL); err != nil {
+		http.Error(w, err.Error(), 400)
 		return
 	}
 	r, cancel := bounded(r)
@@ -180,9 +150,9 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := client.Find(r.Context(), in.Database, in.Table, q)
+	out, err := client.Execute(r.Context(), in.Database, mysql.Query{SQL: in.SQL, Limit: in.Limit, Skip: in.Skip})
 	if err != nil {
-		http.Error(w, "查询失败，请检查筛选条件、排序字段及权限；结果过大时请减少每页条数", 502)
+		http.Error(w, "查询失败，请检查 SQL、数据库和权限；结果过大时减少每页条数", 502)
 		return
 	}
 	respond(w, out)

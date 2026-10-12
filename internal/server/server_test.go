@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -16,8 +15,8 @@ type fake struct{}
 func (fake) Get(context.Context, int) (mysql.Reader, error)   { return fake{}, nil }
 func (fake) Databases(context.Context) ([]string, error)      { return []string{"shop"}, nil }
 func (fake) Tables(context.Context, string) ([]string, error) { return []string{"orders"}, nil }
-func (fake) Find(context.Context, string, string, mysql.Query) (mysql.Result, error) {
-	return mysql.Result{Documents: []map[string]any{{"id": "9007199254740993"}}, Columns: []mysql.Column{{Name: "id", Key: "PRI"}}}, nil
+func (fake) Execute(context.Context, string, mysql.Query) (mysql.Result, error) {
+	return mysql.Result{Rows: [][]any{{"9007199254740993"}}, Columns: []mysql.Column{{Name: "id", Key: "PRI"}}}, nil
 }
 func TestReadOnlyHTTP(t *testing.T) {
 	h := New(config.Config{Clusters: []config.Cluster{{Name: "test", Address: "localhost:3306", User: "private-user", Password: "private-password"}}}, fake{}).Handler()
@@ -28,27 +27,22 @@ func TestReadOnlyHTTP(t *testing.T) {
 			t.Fatalf("unsafe response %d", w.Code)
 		}
 	}
-	for _, body := range []string{`{"database":"shop","table":"orders","filter":{"id":{"$gt":1}}}`, `{"database":"shop","table":"orders","sort":{"id":2}}`, `{"database":"shop","table":"orders","sql":"DELETE FROM orders"}`, `{"database":"shop","table":"orders"} {}`, `{"database":"shop","table":"orders","filter":null}`} {
+	for _, body := range []string{`{"database":"shop","sql":"DELETE FROM orders"}`, `{"database":"shop","sql":"SELECT 1; SELECT 2"}`, `{"database":"shop","sql":"SELECT 1","limit":201}`, `{"database":"shop","sql":"SELECT 1"} {}`} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/0/rows/query", strings.NewReader(body)))
 		if w.Code != 400 {
 			t.Fatalf("accepted invalid request: %s", body)
 		}
 	}
+
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/clusters/0/rows/query", nil))
 	if w.Code != 405 {
 		t.Fatal(w.Code)
 	}
 	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/0/rows/query", strings.NewReader(`{"database":"shop","table":"orders"}`)))
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/0/rows/query", strings.NewReader(`{"database":"shop","sql":"SELECT * FROM shop.orders"}`)))
 	if w.Code != 200 {
 		t.Fatal(w.Code)
-	}
-}
-func TestParsePreservesNumber(t *testing.T) {
-	q, err := parseQuery(queryRequest{Filter: json.RawMessage(`{"id":9007199254740993}`)})
-	if err != nil || q.Filter["id"] != json.Number("9007199254740993") {
-		t.Fatalf("%v %v", q, err)
 	}
 }

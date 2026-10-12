@@ -3,9 +3,10 @@
 轻量 Go MySQL 只读浏览器，参考 [Mongo Explorer](https://github.com/ng-life/mongo-explorer) 的界面与按需加载方式。
 
 - 切换服务，展开数据库后加载表与视图。
-- 查询表数据，查看字段类型、主键、NULL 属性及完整行内容；支持复制和放大查看。
-- JSON 等值筛选，字段升降序排序，每页 20、50、100、200 条。
-- 后端生成参数化 SELECT，不接收任意 SQL，不提供新增、修改或删除接口。数据查询在只读事务内运行。
+- 选中表时填入 `SELECT * FROM db_name.table_name`，支持编辑 SQL、分页和快捷键执行。
+- 查询结果使用动态列，优先显示来源字段备注，无备注则显示结果字段名。
+- 支持普通 SELECT、WHERE、ORDER BY、聚合及 JOIN；表别名和字段别名按 SQL 投影位置映射。
+- 仅支持单条 SELECT，在只读事务中执行；不提供数据写入、锁定查询、文件导出或任意存储函数调用。
 
 ## 运行
 
@@ -33,23 +34,27 @@ password_env = "MYSQL_EXPLORER_PASSWORD"
 
 ## 查询
 
-筛选仅支持字段的等值条件和 NULL，不接受表达式、操作符或 SQL：
+选择表会自动填入并执行默认查询，也可以直接输入带库名的 SQL。展开数据库后，未限定库名的表在该数据库中查询。
 
-```json
-{"status":"active","deleted_at":null}
+```sql
+SELECT * FROM sales.orders
 ```
 
-排序值为 `1`（升序）或 `-1`（降序）：
-
-```json
-{"created_at":-1}
+```sql
+SELECT o.id AS order_no, c.name AS customer_name, o.amount
+FROM sales.orders o
+JOIN sales.customers c ON o.customer_id = c.id
+WHERE o.status = 'active'
+ORDER BY o.id DESC
 ```
 
-默认按主键升序排序；指定排序时追加主键作为同值排序的判定字段。无主键且未指定排序的表不保证顺序。多字段排序按字段名排列。翻页使用已执行的筛选条件，修改输入后需再次查询。
+结果列按 SQL 返回顺序显示。直接字段、字段别名、`*`、`table.*` 和普通 JOIN 会解析来源表的 `COLUMN_COMMENT`。无备注、表达式、UNION 或无法确定来源的列显示结果字段名；派生表及 JOIN USING 等复杂投影可能回退为字段名。同名列独立保留，不覆盖数据。
 
-整数与 DECIMAL 以字符串返回，防止 JavaScript 精度丢失；筛选大整数和精确小数时也请使用 JSON 字符串，例如 `{"id":"9007199254740993"}`。NULL 返回 JSON null；二进制字段显示为 `{"base64":"..."}`。日期时间保留数据库文本格式。
+SQL 使用 AST 校验，只接收单条 SELECT。常用聚合、字符串、日期和 JSON 函数可用；未知函数、锁定查询和文件导出会被拒绝。当前不支持 CTE 和窗口函数等部分 MySQL 8 语法。解析后重新生成 SQL，移除注释，避免执行注释绕过校验。
 
-每页最多 200 条，多读一条判断下一页，不执行全量计数。偏移量上限 1000000，HTTP 请求超时 12 秒，每页 JSON 行内容上限 32 MiB；单个大字段仍需先由驱动读取。分页采用 OFFSET，在并发数据变化时不保证跨页快照一致。仅支持数据库可用权限范围内的表；服务器需支持只读事务。
+每页最多 200 条，自动设置 LIMIT/OFFSET，多读一条判断下一页。原 SQL 的 LIMIT 是结果总数上限，分页保留原 OFFSET；翻页使用已执行的 SQL，修改编辑框后需点击执行查询。无 ORDER BY 时不保证结果顺序，并发变化时不保证跨页快照一致。偏移量上限 1000000，请求超时 12 秒，每页行内容上限 32 MiB；单个大字段仍需先由驱动读取。
+
+整数与 DECIMAL 以字符串返回，防止浏览器丢失精度。NULL 单独显示，二进制显示 Base64，日期时间保留数据库文本格式。服务器需要支持只读事务。
 
 ## 验证与发布
 
@@ -58,7 +63,7 @@ make check
 make build
 ```
 
-测试覆盖 SQL 参数化、标识符转义、筛选与排序校验、精确数字、HTTP 写入口拒绝和凭据隐藏。推送 `v*` 标签后，GitHub Actions 验证并发布 Linux x86_64 与 macOS arm64 二进制。
+测试覆盖 SELECT 校验、危险语句拒绝、LIMIT 分页、字段备注来源解析、同名列与整数精度、HTTP 校验和凭据隐藏。推送 `v*` 标签后，GitHub Actions 验证并发布 Linux x86_64 与 macOS arm64 二进制。
 
 ## Ubuntu systemd
 

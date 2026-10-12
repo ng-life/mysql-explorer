@@ -1,40 +1,38 @@
 package mysql
 
 import (
-	"encoding/json"
-	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestParameterizedQuery(t *testing.T) {
-	cols := []Column{{Name: "id", Key: "PRI"}, {Name: "name"}, {Name: "deleted"}}
-	sql, args, err := buildQuery("db`name", "orders", cols, Query{Filter: map[string]any{"name": "'; DROP TABLE orders; --", "deleted": nil}, Sort: map[string]int{"name": -1}, Limit: 20})
-	if err != nil {
-		t.Fatal(err)
+func TestSQLReadOnly(t *testing.T) {
+	for _, sql := range []string{"SELECT * FROM db.orders", "SELECT a.id, b.name AS customer FROM db.orders a JOIN db.customers b ON a.customer_id=b.id", "SELECT count(*) FROM db.orders", "SELECT 'DELETE FROM x' AS label", "SELECT 1 UNION ALL SELECT 2"} {
+		if _, err := ParseSQL(sql); err != nil {
+			t.Fatalf("rejected %s: %v", sql, err)
+		}
 	}
-	expected := "SELECT * FROM `db``name`.`orders` WHERE `deleted` IS NULL AND `name` = ? ORDER BY `name` DESC, `id` ASC LIMIT ? OFFSET ?"
-	if sql != expected || !reflect.DeepEqual(args, []any{"'; DROP TABLE orders; --", 21, 0}) {
-		t.Fatalf("unexpected query: %s, %v", sql, args)
-	}
-}
-func TestRejectInvalidQueries(t *testing.T) {
-	cols := []Column{{Name: "id", Key: "PRI"}}
-	cases := []Query{
-		{Limit: 201}, {Limit: 20, Skip: -1}, {Limit: 20, Filter: map[string]any{"id` OR 1=1": 1}},
-		{Limit: 20, Sort: map[string]int{"id": 2}}, {Limit: 20, Filter: map[string]any{"id": map[string]any{"$gt": 1}}},
-	}
-	for _, q := range cases {
-		if _, _, err := buildQuery("db", "t", cols, q); err == nil {
-			t.Fatalf("accepted invalid query: %+v", q)
+	for _, sql := range []string{"DELETE FROM t", "UPDATE t SET x=1", "SELECT 1; DELETE FROM t", "SELECT * FROM t FOR UPDATE", "SELECT * INTO OUTFILE '/tmp/a' FROM t", "SELECT get_lock('x',1)", "SELECT dangerous_custom_function()", "SELECT sleep(10)", "SELECT * FROM t LOCK IN SHARE MODE"} {
+		if _, err := ParseSQL(sql); err == nil {
+			t.Fatalf("accepted %s", sql)
 		}
 	}
 }
-func TestLargeNumberStaysExact(t *testing.T) {
-	_, args, err := buildQuery("db", "t", []Column{{Name: "id"}}, Query{Limit: 1, Filter: map[string]any{"id": json.Number("9007199254740993")}})
-	if err != nil || args[0] != "9007199254740993" {
-		t.Fatalf("precision lost: %v, %v", args, err)
+func TestPagingRespectsUserLimit(t *testing.T) {
+	for _, tc := range []struct {
+		sql  string
+		skip int
+		want string
+	}{{"SELECT * FROM db.t", 0, "limit 0, 21"}, {"SELECT * FROM db.t LIMIT 25 OFFSET 10", 20, "limit 30, 5"}, {"SELECT * FROM db.t LIMIT 5", 20, "limit 20, 0"}} {
+		node, err := ParseSQL(tc.sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := pageSQL(node, Query{Limit: 20, Skip: tc.skip})
+		if err != nil || !strings.Contains(out, tc.want) {
+			t.Fatalf("%s %v", out, err)
+		}
 	}
 	if quoteIdentifier("a`;DELETE") != "`a``;DELETE`" {
-		t.Fatal("identifier not escaped")
+		t.Fatal("bad identifier escaping")
 	}
 }

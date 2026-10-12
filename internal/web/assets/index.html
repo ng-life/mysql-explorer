@@ -915,10 +915,15 @@
         $("resultCount").textContent =
           `本页 ${rows.length} 条 · ${columns.length} 列${hasMore ? " · 后续还有数据" : ""}`;
         const head = columns
-          .map(
-            (c) =>
-              `<th title="${esc(c.name + " · " + c.type)}">${esc(c.comment || c.name)}${c.comment ? `<span class="column-name">${esc(c.name)}</span>` : ""}</th>`,
-          )
+          .map((c) => {
+            const characters = Array.from(c.comment || "");
+            const label =
+              characters.length > 4
+                ? characters.slice(0, 4).join("") + "..."
+                : c.comment || c.name;
+            const tooltip = c.comment || c.name + " · " + c.type;
+            return `<th title="${esc(tooltip)}">${esc(label)}${c.comment ? `<span class="column-name">${esc(c.name)}</span>` : ""}</th>`;
+          })
           .join("");
         const body = rows
           .map(

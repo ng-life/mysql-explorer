@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -27,7 +28,7 @@ func Load(args []string) (Config, error) {
 	c := Config{Listen: "127.0.0.1:18084", Clusters: []Cluster{}}
 	fs := flag.NewFlagSet("mysql-explorer", flag.ContinueOnError)
 	var file, listen string
-	fs.StringVar(&file, "config", "config.toml", "TOML configuration file")
+	fs.StringVar(&file, "config", DefaultPath(), "TOML configuration file")
 	fs.StringVar(&listen, "listen", "", "HTTP bind address")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -35,19 +36,30 @@ func Load(args []string) (Config, error) {
 	if fs.NArg() != 0 {
 		return c, fmt.Errorf("unexpected positional arguments")
 	}
-	raw, err := os.ReadFile(file)
-	if err == nil {
-		if err := toml.Unmarshal(raw, &c); err != nil {
-			return c, fmt.Errorf("invalid TOML configuration")
-		}
-	} else if !os.IsNotExist(err) {
+	loaded, err := Read(file)
+	if err != nil {
 		return c, err
 	}
+	c = loaded
 	if listen != "" {
 		c.Listen = listen
 	}
 	if _, err := net.ResolveTCPAddr("tcp", c.Listen); err != nil {
 		return c, fmt.Errorf("invalid listen address")
+	}
+	return c, nil
+}
+
+// Read loads shared configuration without interpreting command-line arguments.
+func Read(file string) (Config, error) {
+	c := Config{Listen: "127.0.0.1:18084", Clusters: []Cluster{}}
+	raw, err := os.ReadFile(file)
+	if err == nil {
+		if err := toml.Unmarshal(raw, &c); err != nil {
+			return c, fmt.Errorf("配置文件 TOML 格式无效")
+		}
+	} else if !os.IsNotExist(err) {
+		return c, fmt.Errorf("无法读取配置文件")
 	}
 	for i := range c.Clusters {
 		cl := &c.Clusters[i]
@@ -63,4 +75,18 @@ func Load(args []string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// DefaultPath preserves local configuration precedence and supports installed CLI use.
+func DefaultPath() string {
+	if _, err := os.Stat("config.toml"); err == nil {
+		return "config.toml"
+	}
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "mysql-explorer", "config.toml")
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "mysql-explorer", "config.toml")
+	}
+	return "config.toml"
 }

@@ -104,3 +104,87 @@ WantedBy=default.target
 systemctl --user daemon-reload
 systemctl --user enable --now mysql-explorer
 ```
+
+## 命令行查询与元数据
+
+同一个二进制支持 Web 与一次性 CLI 命令。无子命令时仍启动 Web，也可使用 `mysql-explorer serve`。CLI 直接连接配置中的目标服务，不需要 Web 服务运行，不预加载所有服务的元数据。
+
+MySQL 的 database 与 schema 是同义词；命令层级为「已配置连接 → schema → 表 → 表结构」。所有命令支持 `--config`，可放在子命令前或后。默认优先使用当前目录的 `config.toml`，否则读取 `$XDG_CONFIG_HOME/mysql-explorer/config.toml`；未设置 `XDG_CONFIG_HOME` 时读取 `~/.config/mysql-explorer/config.toml`。
+
+```sh
+# 列出配置中的连接，不连接数据库，不显示密码
+mysql-explorer connections
+
+# 列出账号可见的数据库/schema
+mysql-explorer schemas --connection 开发环境
+
+# 列出表和视图的名称、类型、备注
+mysql-explorer tables --connection 开发环境 --schema sales
+
+# 字段顺序、类型、可空、默认值、键、额外属性、备注
+mysql-explorer describe --connection 开发环境 --schema sales --table orders
+
+# 索引及完整建表定义，两种选项不能同时使用
+mysql-explorer describe --connection 开发环境 --schema sales --table orders --indexes
+mysql-explorer describe --connection 开发环境 --schema sales --table orders --ddl
+
+# 执行单条 SELECT；默认每页 100 行，最多 200 行
+mysql-explorer query --connection 开发环境 --schema sales \
+  --sql 'SELECT id, amount FROM orders ORDER BY id DESC' --limit 100 --offset 0
+
+# 文件或标准输入，输入上限 1 MiB
+mysql-explorer query --connection 开发环境 --schema sales --file query.sql
+cat query.sql | mysql-explorer query --connection 开发环境 --schema sales --file -
+
+# JSON 输出，适合脚本处理
+mysql-explorer query --connection 开发环境 \
+  --sql 'SELECT * FROM sales.orders' --format json
+
+mysql-explorer query --help
+```
+
+只有一个连接时可省略 `--connection`；多个连接时必须通过名称精确选择，名称重复时报错。`tables` 和 `describe` 必须指定 `--schema`；`query` 可省略，此时 SQL 中的表需使用完整名称。`--sql` 和 `--file` 必须且只能指定一个；只有显式使用 `--file -` 才读取标准输入。
+
+默认使用 Lip Gloss 渲染圆角表格和彩色表头，中文按终端显示宽度对齐。长内容自动换行，窄终端在多列无法容纳时按记录纵向展示字段和值；空结果显示「无数据」。重定向输出及设置 `NO_COLOR` 时不输出 ANSI 样式。控制字符使用转义形式，NULL 显示为 `NULL`，空字符串显示为 `""`。所有 CLI 数据命令支持 `--format json`，JSON 保留原始值。查询 JSON 沿用 Web 的 `columns`、二维数组 `rows` 和 `has_more`，不会因列名重复覆盖数据。表格查询输出也包含行数及 `has_more`；当前页不是完整结果时，使用 `--offset` 继续查询。
+
+CLI 沿用单条 SELECT 校验、函数白名单、只读事务、分页上限、32 MiB 行内容限制和 12 秒请求超时。SQL 原有 LIMIT/OFFSET 与 CLI 分页按 Web 相同规则组合，不自动读取全部结果。字段结构 JSON 的 `default: null` 与 `default: ""` 分别表示 SQL NULL 与空字符串默认值。
+
+数据写入 stdout，参数或运行错误写入 stderr；数据库原始错误不直接输出。退出码：`0` 成功（包括空结果），`1` 配置、连接、读取或输出失败，`2` 参数或 SQL 校验失败。帮助命令不加载配置、不连接数据库。
+
+
+## Shell 动态补全
+
+支持 zsh 和 Bash（包括 macOS 自带 Bash 3）。补全命令、选项、输出格式和文件路径；`--connection` 从当前配置读取连接名称，`--schema` 与 `--table` 根据已选连接/schema 实时查询账号可见的元数据。支持空格分隔与 `--schema=value` 等写法。
+
+```sh
+# zsh：在 compinit 或 Oh My Zsh 初始化之后加载
+mkdir -p ~/.local/share/mysql-explorer
+mysql-explorer completion zsh > ~/.local/share/mysql-explorer/completion.zsh
+source ~/.local/share/mysql-explorer/completion.zsh
+
+# Bash：在交互式 shell 的启动文件中加载
+mysql-explorer completion bash > ~/.local/share/mysql-explorer/completion.bash
+source ~/.local/share/mysql-explorer/completion.bash
+```
+
+将对应 `source` 行加入 `~/.zshrc` 或 Bash 启动文件即可持久启用。在以下位置按 Tab：
+
+```text
+mysql-explorer schemas --connection <Tab>
+mysql-explorer tables --connection TMS_RELEASE --schema <Tab>
+mysql-explorer describe --connection TMS_RELEASE --schema sc_setting --table <Tab>
+```
+
+动态补全只读取元数据，不执行 SQL、不启动 Web、不预加载其他服务。每次补全重新读取配置和相关元数据，不保存跨命令缓存；数据库补全超时为 2 秒。配置、连接或网络不可用时安静返回空候选，不显示数据库详细错误。连接有多个时，补全 schema 前需选定连接；补全表名前需选定 schema。`--sql` 输入不提供 SQL 文本补全。
+
+## 本机安装
+
+```sh
+make build
+mkdir -p ~/.local/bin ~/.config/mysql-explorer
+install -m 755 dist/mysql-explorer ~/.local/bin/mysql-explorer
+# 将配置放到 ~/.config/mysql-explorer/config.toml，并设置权限 600
+chmod 600 ~/.config/mysql-explorer/config.toml
+```
+
+确保 `~/.local/bin` 在 PATH 中。安装后可在任意目录执行 CLI；当前目录存在 `config.toml` 时仍优先使用它，也可通过 `--config` 指定其他文件。

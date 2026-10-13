@@ -13,7 +13,8 @@
 MySQL Explorer 是使用 Go 实现的轻量 MySQL 只读浏览器，支持多个服务、元数据缓存、SQL 编辑和分页查询。HTML 与编辑器 bundle 嵌入二进制，运行时无需 Node.js 或外部 CDN。
 
 - `cmd/mysql-explorer/main.go`：程序入口、配置加载和退出信号处理。
-- `internal/config/`：命令行参数与 TOML 配置。
+- `internal/config/`：命令行参数、默认配置路径与 TOML 配置。
+- `internal/cli/`：只读 CLI、输出格式和 zsh/Bash 动态补全。
 - `internal/mysql/`：连接、元数据缓存、SQL AST 校验、分页和结果转换。
 - `internal/server/`：HTTP 路由、请求校验、超时及错误响应。
 - `internal/web/assets.go`：静态资源嵌入。

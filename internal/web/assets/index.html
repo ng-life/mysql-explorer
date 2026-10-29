@@ -617,6 +617,8 @@
                 <option>200</option>
               </select>
             </div>
+            <button id="explain" type="button" class="button" disabled>EXPLAIN</button>
+            <button id="explainAnalyze" type="button" class="button" disabled>EXPLAIN ANALYZE</button>
             <button id="formatSQL" type="button" class="button" disabled>
               格式化
             </button>
@@ -628,13 +630,13 @@
           </div>
           <p class="query-hint">
             单条 SELECT · Ctrl / ⌘ + Enter 执行 · 字段备注优先显示 ·
-            大整数与精确小数保留为字符串
+            大整数与精确小数保留为字符串。执行计划保留原 SQL 的 LIMIT，不追加分页；EXPLAIN ANALYZE 会实际执行查询（MySQL 8.0.18+），超时 12 秒。
           </p>
         </form>
         <div id="error" class="alert" role="alert" hidden></div>
         <section class="panel results">
           <div class="list-title">
-            查询结果<span id="resultCount" class="count">等待查询</span>
+            <span id="resultTitle">查询结果</span><span id="resultCount" class="count">等待查询</span>
           </div>
           <div id="results" class="table-scroll">
             <div class="empty">选择表，或输入 SQL 执行查询</div>
@@ -700,10 +702,11 @@
       }
       function enableQuery(enabled) {
         sqlEditor.disabled = !enabled;
-        for (const id of ["limit", "formatSQL", "resetQuery", "runQuery"])
+        for (const id of ["limit", "formatSQL", "resetQuery", "runQuery", "explain", "explainAnalyze"])
           $(id).disabled = !enabled;
       }
       function clearResults(message = "选择表，或输入 SQL 执行查询") {
+        $("resultTitle").textContent = "查询结果";
         rows = [];
         columns = [];
         hasMore = false;
@@ -940,11 +943,12 @@
         )
           query(true);
       }
-      async function query(fresh, skip = 0) {
+      async function query(fresh, skip = 0, mode = "query") {
         if (active < 0) return;
         const payload = fresh
           ? {
               database,
+              mode,
               sql: sqlEditor.value,
               limit: Number($("limit").value),
               skip: 0,
@@ -958,7 +962,7 @@
         if (queryController) queryController.abort();
         queryController = new AbortController();
         loading = true;
-        $("runQuery").disabled = true;
+        for (const id of ["runQuery", "explain", "explainAnalyze"]) $(id).disabled = true;
         clearResults("正在执行查询…");
         showError("");
         status("正在查询", "busy");
@@ -984,11 +988,22 @@
         } finally {
           if (token === queryToken) {
             loading = false;
-            $("runQuery").disabled = active < 0;
+            for (const id of ["runQuery", "explain", "explainAnalyze"]) $(id).disabled = active < 0;
           }
         }
       }
       function renderResults() {
+        const plan = lastQuery.mode === "explain" || lastQuery.mode === "explain_analyze";
+        $("resultTitle").textContent = plan ? (lastQuery.mode === "explain" ? "EXPLAIN 执行计划" : "EXPLAIN ANALYZE 实际执行计划") : "查询结果";
+        if (lastQuery.mode === "explain_analyze") {
+          $("results").innerHTML = '<pre class="data" style="margin:16px"></pre>';
+          $("results").firstChild.textContent = rows.map(row => row.join("\n")).join("\n");
+          $("resultCount").textContent = "实际执行计划";
+          $("pageInfo").textContent = "分析原 SQL · 未追加分页";
+          $("prevPage").disabled = true;
+          $("nextPage").disabled = true;
+          return;
+        }
         $("resultCount").textContent =
           `本页 ${rows.length} 条 · ${columns.length} 列${hasMore ? " · 后续还有数据" : ""}`;
         const head = columns
@@ -1013,14 +1028,16 @@
         $("pageInfo").textContent = rows.length
           ? `第 ${lastQuery.skip + 1}–${lastQuery.skip + rows.length} 条`
           : "本页没有数据";
-        $("prevPage").disabled = lastQuery.skip === 0;
+        $("prevPage").disabled = plan || lastQuery.skip === 0;
         $("nextPage").disabled =
-          !hasMore || lastQuery.skip + lastQuery.limit > 1000000;
+          plan || !hasMore || lastQuery.skip + lastQuery.limit > 1000000;
       }
       $("queryForm").onsubmit = (e) => {
         e.preventDefault();
         query(true);
       };
+      $("explain").onclick = () => query(true, 0, "explain");
+      $("explainAnalyze").onclick = () => query(true, 0, "explain_analyze");
       $("formatSQL").onclick = () => {
         try {
           sqlEditor.format();

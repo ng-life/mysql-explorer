@@ -90,3 +90,50 @@ func TestNoImplicitDatabaseFromPreviousConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestExplainExecutesValidatedOriginalSQL(t *testing.T) {
+	for _, mode := range []string{"explain", "explain_analyze"} {
+		t.Run(mode, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			prefix := "EXPLAIN FORMAT=TRADITIONAL "
+			if mode == "explain_analyze" {
+				prefix = "EXPLAIN ANALYZE "
+			}
+			mock.ExpectBegin()
+			mock.ExpectExec("USE `sales`").WillReturnResult(sqlmock.NewResult(0, 0))
+			// No application LIMIT or metadata lookup may change the original plan.
+			mock.ExpectQuery("^" + regexp.QuoteMeta(prefix+"select id from orders limit 7, 42") + "$").
+				WillReturnRows(sqlmock.NewRows([]string{"EXPLAIN"}).AddRow("-> scan\n    -> rows"))
+			mock.ExpectRollback()
+			out, err := (&Client{DB: db}).Execute(context.Background(), "sales", Query{
+				SQL: "SELECT /* comment */ id FROM orders LIMIT 7,42", Mode: mode, Limit: 1,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out.Rows) != 1 || out.HasMore || out.Columns[0].Name != "EXPLAIN" || out.Columns[0].Comment != "" {
+				t.Fatalf("unexpected plan: %+v", out)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestExplainRejectsUnsafeSQLAndUnknownMode(t *testing.T) {
+	for _, mode := range []string{"explain", "explain_analyze"} {
+		for _, statement := range []string{"DELETE FROM sales.orders", "SELECT 1; SELECT 2", "SELECT * FROM sales.orders FOR UPDATE", "SELECT sleep(10)", "SELECT * FROM orders"} {
+			if _, err := (&Client{}).Execute(context.Background(), "", Query{SQL: statement, Mode: mode}); err == nil {
+				t.Fatalf("accepted %s in %s", statement, mode)
+			}
+		}
+	}
+	if _, err := (&Client{}).Execute(context.Background(), "", Query{SQL: "SELECT 1", Mode: "invalid"}); err == nil {
+		t.Fatal("accepted unknown mode")
+	}
+}

@@ -25,6 +25,9 @@ func TestStaticCompletion(t *testing.T) {
 		args []string
 		want string
 	}{
+		{[]string{"query", "--mo"}, "--mode\n"},
+		{[]string{"query", "--mode", "explain"}, "explain\nexplain_analyze\n"},
+		{[]string{"query", "--mode=explain_a"}, "--mode=explain_analyze\n"},
 		{[]string{"qu"}, "query\n"},
 		{[]string{"describe", "--ta"}, "--table\n"},
 		{[]string{"query", "--format", "j"}, "json\n"},

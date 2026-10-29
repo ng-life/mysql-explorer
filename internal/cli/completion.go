@@ -29,7 +29,7 @@ func commandFlags(command string) []string {
 	case "describe":
 		return append(out, "--connection", "--schema", "--table", "--indexes", "--ddl", "--format")
 	case "query":
-		return append(out, "--connection", "--schema", "--sql", "--file", "--limit", "--offset", "--format")
+		return append(out, "--connection", "--schema", "--sql", "--file", "--limit", "--offset", "--mode", "--format")
 	}
 	return out
 }
@@ -85,6 +85,10 @@ func complete(ctx context.Context, args []string, stdout io.Writer) int {
 	c := completionWords(args)
 	candidates := []string{}
 	switch c.valueFlag {
+	case "mode":
+		if c.command == "query" {
+			candidates = []string{"query", "explain", "explain_analyze"}
+		}
 	case "format":
 		candidates = []string{"table", "json"}
 	case "connection", "schema", "table":

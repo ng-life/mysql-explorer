@@ -21,6 +21,7 @@ type Column struct {
 	Comment  string `json:"comment"`
 }
 type Query struct {
+	Mode  string `json:"mode,omitempty"`
 	SQL   string `json:"sql"`
 	Limit int    `json:"limit"`
 	Skip  int    `json:"skip"`

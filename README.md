@@ -59,6 +59,16 @@ SQL 使用 AST 校验，只接收单条 SELECT。常用聚合、字符串、日�
 
 整数与 DECIMAL 以字符串返回，防止浏览器丢失精度。NULL 单独显示，二进制显示 Base64，日期时间保留数据库文本格式。服务器需要支持只读事务。
 
+## SQL 执行计划
+
+在编辑器输入单条 SELECT，点击「EXPLAIN」查看表格执行计划，点击「EXPLAIN ANALYZE」查看包含实际耗时、行数和循环次数的文本树。无需手动添加 EXPLAIN 前缀。
+
+- EXPLAIN 使用 `FORMAT=TRADITIONAL`，保持表格输出。
+- EXPLAIN ANALYZE 会实际执行 SELECT，需要 MySQL 8.0.18+；数据库版本和查询类型不支持时显示错误，不自动回退或重复执行。
+- 分析保留原 SQL 的 LIMIT/OFFSET，不追加应用分页，页面的每页条数不影响执行计划。分析大表时可先自行限制 SQL。
+- 沿用 SELECT AST 校验、函数白名单、注释清除、只读事务、12 秒请求超时和 32 MiB 返回内容限制。执行计划不分页，返回完整计划。
+- Web API：`POST /api/clusters/{id}/rows/query` 支持 `mode` 为 `query`（默认）、`explain` 或 `explain_analyze`；SQL 字段仍传入 SELECT，计划模式的 `skip` 必须为 0。响应沿用 `columns`、`rows`、`has_more`，计划的 `has_more` 为 false。
+
 ## 编辑器开发
 
 修改 `frontend/editor.js` 后使用 Node.js 24 和 pnpm 重新构建：
@@ -140,12 +150,26 @@ cat query.sql | mysql-explorer query --connection 开发环境 --schema sales --
 mysql-explorer query --connection 开发环境 \
   --sql 'SELECT * FROM sales.orders' --format json
 
+# 估算执行计划（表格）
+mysql-explorer query --connection 开发环境 --schema sales \
+  --mode explain --sql 'SELECT * FROM orders WHERE id = 1'
+
+# 实际执行并分析（MySQL 8.0.18+）；终端保留文本树缩进
+mysql-explorer query --connection 开发环境 --schema sales \
+  --mode explain_analyze --file query.sql
+
+# JSON 输出完整计划，沿用 columns / rows / has_more
+mysql-explorer query --connection 开发环境 --schema sales \
+  --mode explain_analyze --file query.sql --format json
+
 mysql-explorer query --help
 ```
 
 只有一个连接时可省略 `--connection`；多个连接时必须通过名称精确选择，名称重复时报错。`tables` 和 `describe` 必须指定 `--schema`；`query` 可省略，此时 SQL 中的表需使用完整名称。`--sql` 和 `--file` 必须且只能指定一个；只有显式使用 `--file -` 才读取标准输入。
 
 默认使用 Lip Gloss 渲染圆角表格和彩色表头，中文按终端显示宽度对齐。长内容自动换行，窄终端在多列无法容纳时按记录纵向展示字段和值；空结果显示「无数据」。重定向输出及设置 `NO_COLOR` 时不输出 ANSI 样式。控制字符使用转义形式，NULL 显示为 `NULL`，空字符串显示为 `""`。所有 CLI 数据命令支持 `--format json`，JSON 保留原始值。查询 JSON 沿用 Web 的 `columns`、二维数组 `rows` 和 `has_more`，不会因列名重复覆盖数据。表格查询输出也包含行数及 `has_more`；当前页不是完整结果时，使用 `--offset` 继续查询。
+
+`query --mode` 支持 `query`（默认）、`explain`、`explain_analyze`。计划模式复用 SQL 文件和标准输入，保留 SQL 本身的 LIMIT/OFFSET，不接受 `--limit` 或 `--offset`。EXPLAIN ANALYZE 会实际执行 SELECT，不自动重试或回退；版本或查询类型不支持时返回退出码 1。表格模式下 EXPLAIN 显示表格，EXPLAIN ANALYZE 直接显示文本树；JSON 不附加提示或分页摘要。
 
 CLI 沿用单条 SELECT 校验、函数白名单、只读事务、分页上限、32 MiB 行内容限制和 12 秒请求超时。SQL 原有 LIMIT/OFFSET 与 CLI 分页按 Web 相同规则组合，不自动读取全部结果。字段结构 JSON 的 `default: null` 与 `default: ""` 分别表示 SQL NULL 与空字符串默认值。
 
@@ -154,7 +178,7 @@ CLI 沿用单条 SELECT 校验、函数白名单、只读事务、分页上限�
 
 ## Shell 动态补全
 
-支持 zsh 和 Bash（包括 macOS 自带 Bash 3）。补全命令、选项、输出格式和文件路径；`--connection` 从当前配置读取连接名称，`--schema` 与 `--table` 根据已选连接/schema 实时查询账号可见的元数据。支持空格分隔与 `--schema=value` 等写法。
+支持 zsh 和 Bash（包括 macOS 自带 Bash 3）。补全命令、选项、执行模式、输出格式和文件路径；`--connection` 从当前配置读取连接名称，`--schema` 与 `--table` 根据已选连接/schema 实时查询账号可见的元数据。支持空格分隔与 `--schema=value` 等写法。
 
 ```sh
 # zsh：在 compinit 或 Oh My Zsh 初始化之后加载

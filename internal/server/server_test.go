@@ -27,7 +27,10 @@ func TestReadOnlyHTTP(t *testing.T) {
 			t.Fatalf("unsafe response %d", w.Code)
 		}
 	}
-	for _, body := range []string{`{"database":"shop","sql":"DELETE FROM orders"}`, `{"database":"shop","sql":"SELECT 1; SELECT 2"}`, `{"database":"shop","sql":"SELECT 1","limit":201}`, `{"database":"shop","sql":"SELECT 1"} {}`} {
+	for _, body := range []string{
+		`{"sql":"SELECT 1","mode":"invalid"}`,
+		`{"sql":"SELECT 1","mode":"explain","skip":20}`,
+		`{"sql":"DELETE FROM orders","mode":"explain_analyze"}`, `{"database":"shop","sql":"DELETE FROM orders"}`, `{"database":"shop","sql":"SELECT 1; SELECT 2"}`, `{"database":"shop","sql":"SELECT 1","limit":201}`, `{"database":"shop","sql":"SELECT 1"} {}`} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/0/rows/query", strings.NewReader(body)))
 		if w.Code != 400 {
@@ -61,4 +64,15 @@ func (f fake) RefreshTables(ctx context.Context, db string) ([]string, error) {
 }
 func (f fake) RefreshColumns(ctx context.Context, db, table string) ([]mysql.Column, error) {
 	return f.Schema(ctx, db, table)
+}
+
+func TestExplainHTTPModes(t *testing.T) {
+	h := New(config.Config{Clusters: []config.Cluster{{Name: "test"}}}, fake{}).Handler()
+	for _, mode := range []string{"explain", "explain_analyze"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/0/rows/query", strings.NewReader(`{"sql":"SELECT 1","mode":"`+mode+`"}`)))
+		if w.Code != 200 {
+			t.Fatalf("%s: %d %s", mode, w.Code, w.Body.String())
+		}
+	}
 }

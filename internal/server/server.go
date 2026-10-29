@@ -113,6 +113,7 @@ func validName(name string) bool {
 }
 
 type queryRequest struct {
+	Mode     string `json:"mode"`
 	Database string `json:"database"`
 	SQL      string `json:"sql"`
 	Limit    int    `json:"limit"`
@@ -137,6 +138,14 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "数据库名称无效", 400)
 		return
 	}
+	if in.Mode != "" && in.Mode != "query" && in.Mode != "explain" && in.Mode != "explain_analyze" {
+		http.Error(w, "不支持的执行模式", 400)
+		return
+	}
+	if in.Mode != "" && in.Mode != "query" && in.Skip != 0 {
+		http.Error(w, "执行计划不支持分页", 400)
+		return
+	}
 	if in.Limit == 0 {
 		in.Limit = 20
 	}
@@ -154,9 +163,13 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := client.Execute(r.Context(), in.Database, mysql.Query{SQL: in.SQL, Limit: in.Limit, Skip: in.Skip})
+	out, err := client.Execute(r.Context(), in.Database, mysql.Query{Mode: in.Mode, SQL: in.SQL, Limit: in.Limit, Skip: in.Skip})
 	if err != nil {
-		http.Error(w, "查询失败，请检查 SQL、数据库和权限；结果过大时减少每页条数", 502)
+		message := "查询失败，请检查 SQL、数据库和权限；结果过大时减少每页条数"
+		if in.Mode == "explain" || in.Mode == "explain_analyze" {
+			message = "执行计划分析失败，请检查 SQL、权限和超时；EXPLAIN ANALYZE 需要 MySQL 8.0.18+ 及受支持的查询"
+		}
+		http.Error(w, message, 502)
 		return
 	}
 	respond(w, out)

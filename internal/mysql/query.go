@@ -99,6 +99,21 @@ func pageSQL(node sqlparser.SelectStatement, q Query) (string, error) {
 	return sqlparser.String(node), nil
 }
 
+// querySQL keeps the original SELECT limits for plans: application pagination
+// would otherwise change the optimizer's plan and the work measured by ANALYZE.
+func querySQL(node sqlparser.SelectStatement, q Query) (string, error) {
+	switch q.Mode {
+	case "", "query":
+		return pageSQL(node, q)
+	case "explain":
+		return "EXPLAIN FORMAT=TRADITIONAL " + sqlparser.String(node), nil
+	case "explain_analyze":
+		return "EXPLAIN ANALYZE " + sqlparser.String(node), nil
+	default:
+		return "", fmt.Errorf("不支持的执行模式")
+	}
+}
+
 type source struct {
 	database, table, alias string
 	columns                []Column
@@ -217,7 +232,7 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 			return out, err
 		}
 	}
-	statement, err := pageSQL(node, q)
+	statement, err := querySQL(node, q)
 	if err != nil {
 		return out, err
 	}
@@ -247,7 +262,7 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 	}
 	size := 0
 	for rows.Next() {
-		if len(out.Rows) == q.Limit {
+		if (q.Mode == "" || q.Mode == "query") && len(out.Rows) == q.Limit {
 			out.HasMore = true
 			break
 		}
@@ -291,7 +306,14 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 	if err != nil {
 		return out, err
 	}
-	out.Columns = c.resultColumns(ctx, database, node, names)
+	if q.Mode == "" || q.Mode == "query" {
+		out.Columns = c.resultColumns(ctx, database, node, names)
+	} else {
+		// Plan columns describe optimizer output, not the SELECT projection.
+		for _, name := range names {
+			out.Columns = append(out.Columns, Column{Name: name})
+		}
+	}
 	for i := range out.Columns {
 		if out.Columns[i].Type == "" {
 			out.Columns[i].Type = types[i].DatabaseTypeName()

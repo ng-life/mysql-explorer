@@ -3,12 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ng-life/mysql-explorer/internal/config"
+	"github.com/ng-life/mysql-explorer/internal/mysql"
 )
 
 func TestParse(t *testing.T) {
@@ -113,5 +116,80 @@ func TestOversizedInputAndJSONControlPreservation(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `a\nb\u001b`) {
 		t.Fatal(out.String())
+	}
+}
+
+func TestPlanOptionsAndOfflineValidation(t *testing.T) {
+	for _, mode := range []string{"explain", "explain_analyze"} {
+		o, err := parse([]string{"--config", "query", "query", "--mode=" + mode, "--file", "-", "--format", "json"}, &bytes.Buffer{})
+		if err != nil || o.mode != mode || o.config != "query" {
+			t.Fatal(o, err)
+		}
+		for _, extra := range [][]string{{"--limit", "100"}, {"--offset=0"}} {
+			args := append([]string{"query", "--mode", mode, "--sql", "SELECT 1"}, extra...)
+			if _, err := parse(args, &bytes.Buffer{}); err == nil {
+				t.Fatal("accepted plan pagination", args)
+			}
+		}
+		for _, statement := range []string{"DELETE FROM t", "SELECT 1; SELECT 2", "SELECT * FROM t FOR UPDATE", "SELECT sleep(10)"} {
+			var out, errs bytes.Buffer
+			code := Run(context.Background(), []string{"query", "--mode", mode, "--config", "/nonexistent/config", "--file", "-"}, strings.NewReader(statement), &out, &errs)
+			if code != 2 || out.Len() != 0 {
+				t.Fatal(code, out.String(), errs.String())
+			}
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := Run(context.Background(), []string{"query", "--mode", "invalid", "--sql", "SELECT 1"}, strings.NewReader(""), &out, &errs); code != 2 {
+		t.Fatal(code)
+	}
+}
+
+type planReader struct {
+	mysql.Reader
+	query    mysql.Query
+	database string
+	err      error
+}
+
+func (r *planReader) Execute(_ context.Context, database string, q mysql.Query) (mysql.Result, error) {
+	r.query, r.database = q, database
+	return mysql.Result{Columns: []mysql.Column{{Name: "EXPLAIN"}}, Rows: [][]any{{"-> scan\n    -> rows\x1b[31m"}}}, r.err
+}
+func TestCLIPlanDispatchAndOutput(t *testing.T) {
+	for _, mode := range []string{"query", "explain", "explain_analyze"} {
+		for _, format := range []string{"table", "json"} {
+			t.Run(mode+"/"+format, func(t *testing.T) {
+				var out, errs bytes.Buffer
+				reader := &planReader{}
+				o := options{mode: mode, format: format, statement: "SELECT * FROM orders LIMIT 42", schema: "sales", limit: 100}
+				if code := executeQuery(context.Background(), reader, o, &out, &errs); code != 0 || errs.Len() != 0 {
+					t.Fatal(code, errs.String())
+				}
+				if reader.query.Mode != mode || reader.query.SQL != o.statement || reader.database != "sales" {
+					t.Fatal(reader.query)
+				}
+				if format == "json" {
+					var result mysql.Result
+					if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.Rows[0][0] != "-> scan\n    -> rows\x1b[31m" {
+						t.Fatal(out.String(), err)
+					}
+				} else {
+					if strings.ContainsRune(out.String(), '\x1b') {
+						t.Fatal("terminal escape leaked")
+					}
+					if mode == "explain_analyze" && !strings.Contains(out.String(), "-> scan\n    -> rows") {
+						t.Fatal("tree line breaks lost", out.String())
+					}
+					if mode != "query" && strings.Contains(out.String(), "has_more") {
+						t.Fatal("plan has pagination footer", out.String())
+					}
+				}
+			})
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := executeQuery(context.Background(), &planReader{err: fmt.Errorf("private-password")}, options{mode: "explain_analyze"}, &out, &errs); code != 1 || out.Len() != 0 || strings.Contains(errs.String(), "private-password") {
+		t.Fatal(code, out.String(), errs.String())
 	}
 }

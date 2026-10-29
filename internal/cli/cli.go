@@ -24,9 +24,9 @@ const help = `用法：mysql-explorer [--config config.toml] <命令> [选项]
 `
 
 type options struct {
-	command, config, listen, connection, schema, table, statement, file, format string
-	limit, offset                                                               int
-	indexes, ddl                                                                bool
+	command, config, listen, connection, schema, table, statement, file, format, mode string
+	limit, offset                                                                     int
+	indexes, ddl                                                                      bool
 }
 
 // parse separates a command from flags while allowing --config on either side.
@@ -76,7 +76,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 			fs.BoolVar(&o.ddl, "ddl", false, "查看建表定义")
 		}
 		if o.command == "query" {
-			fs.StringVar(&o.statement, "sql", "", "单条 SELECT")
+			fs.StringVar(&o.mode, "mode", "query", "执行模式：query、explain、explain_analyze（实际执行 SELECT，需要 MySQL 8.0.18+）")
+			fs.StringVar(&o.statement, "sql", "", "单条 SELECT；计划模式保留原 SQL，不追加分页")
 			fs.StringVar(&o.file, "file", "", "SQL 文件，- 表示标准输入")
 			fs.IntVar(&o.limit, "limit", 100, "每页行数，1–200")
 			fs.IntVar(&o.offset, "offset", 0, "偏移量，0–1000000")
@@ -100,6 +101,20 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("必须指定 --table，--indexes 与 --ddl 不能同时使用")
 	}
 	if o.command == "query" {
+		if o.mode != "query" && o.mode != "explain" && o.mode != "explain_analyze" {
+			return o, fmt.Errorf("--mode 必须是 query、explain 或 explain_analyze")
+		}
+		if o.mode != "query" {
+			pagination := false
+			fs.Visit(func(f *flag.Flag) {
+				if f.Name == "limit" || f.Name == "offset" {
+					pagination = true
+				}
+			})
+			if pagination {
+				return o, fmt.Errorf("执行计划不支持 --limit 或 --offset，请在 SQL 中指定 LIMIT/OFFSET")
+			}
+		}
 		if (o.statement == "") == (o.file == "") {
 			return o, fmt.Errorf("必须且只能提供 --sql 或 --file")
 		}
@@ -288,30 +303,55 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 		}
 	case "query":
-		var result mysql.Result
-		result, err = client.Execute(ctx, o.schema, mysql.Query{SQL: o.statement, Limit: o.limit, Skip: o.offset})
-		data = result
-		rows = result.Rows
-		for _, col := range result.Columns {
-			headers = append(headers, col.Name)
-		}
-		if err == nil && o.format == "table" {
-			if code := output(o.format, stdout, stderr, data, headers, rows); code != 0 {
-				return code
-			}
-			_, err = fmt.Fprintln(stdout, tableFooter(stdout, len(rows), result.HasMore))
-			if err != nil {
-				fmt.Fprintln(stderr, "无法写入输出")
-				return 1
-			}
-			return 0
-		}
+		return executeQuery(ctx, client, o, stdout, stderr)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, "读取失败，请检查 schema、表名、SQL、权限或超时；数据库详细错误已隐藏")
 		return 1
 	}
 	return output(o.format, stdout, stderr, data, headers, rows)
+}
+
+// executeQuery shares the validated SQL execution path with Web and keeps JSON
+// output free of diagnostics and human-readable summaries.
+func executeQuery(ctx context.Context, reader mysql.Reader, o options, stdout, stderr io.Writer) int {
+	result, err := reader.Execute(ctx, o.schema, mysql.Query{SQL: o.statement, Mode: o.mode, Limit: o.limit, Skip: o.offset})
+	if err != nil {
+		message := "读取失败，请检查 schema、表名、SQL、权限或超时；数据库详细错误已隐藏"
+		if o.mode == "explain" || o.mode == "explain_analyze" {
+			message = "执行计划分析失败，请检查 SQL、权限和超时；EXPLAIN ANALYZE 需要 MySQL 8.0.18+ 及受支持的查询"
+		}
+		fmt.Fprintln(stderr, message)
+		return 1
+	}
+	// Preserve plan indentation and line breaks while escaping terminal controls.
+	if o.mode == "explain_analyze" && o.format == "table" {
+		for _, row := range result.Rows {
+			for _, value := range row {
+				for _, line := range strings.Split(fmt.Sprint(value), "\n") {
+					if _, err := fmt.Fprintln(stdout, cell(line)); err != nil {
+						fmt.Fprintln(stderr, "无法写入输出")
+						return 1
+					}
+				}
+			}
+		}
+		return 0
+	}
+	headers := []string{}
+	for _, col := range result.Columns {
+		headers = append(headers, col.Name)
+	}
+	if code := output(o.format, stdout, stderr, result, headers, result.Rows); code != 0 {
+		return code
+	}
+	if o.format == "table" && o.mode == "query" {
+		if _, err := fmt.Fprintln(stdout, tableFooter(stdout, len(result.Rows), result.HasMore)); err != nil {
+			fmt.Fprintln(stderr, "无法写入输出")
+			return 1
+		}
+	}
+	return 0
 }
 
 func nullableString(v *string) any {

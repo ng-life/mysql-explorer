@@ -1,4 +1,4 @@
-// Package cli provides one-shot read-only commands alongside the HTTP server.
+// Package cli provides one-shot SQL and metadata commands alongside the HTTP server.
 package cli
 
 import (
@@ -26,6 +26,7 @@ const help = `用法：mysql-explorer [--config config.toml] <命令> [选项]
 type options struct {
 	command, config, listen, connection, schema, table, statement, file, format, mode string
 	limit, offset                                                                     int
+	pagination                                                                        bool
 	indexes, ddl                                                                      bool
 }
 
@@ -76,8 +77,8 @@ func parse(args []string, stderr io.Writer) (options, error) {
 			fs.BoolVar(&o.ddl, "ddl", false, "查看建表定义")
 		}
 		if o.command == "query" {
-			fs.StringVar(&o.mode, "mode", "query", "执行模式：query、explain、explain_analyze（实际执行 SELECT，需要 MySQL 8.0.18+）")
-			fs.StringVar(&o.statement, "sql", "", "单条 SELECT；计划模式保留原 SQL，不追加分页")
+			fs.StringVar(&o.mode, "mode", "query", "执行模式：query、explain、explain_analyze（实际执行 SELECT，需要 MySQL 8.0.18+ 或支持该语法的 TiDB）")
+			fs.StringVar(&o.statement, "sql", "", "单条 SELECT 或配置允许的 DML；计划模式不追加分页")
 			fs.StringVar(&o.file, "file", "", "SQL 文件，- 表示标准输入")
 			fs.IntVar(&o.limit, "limit", 100, "每页行数，1–200")
 			fs.IntVar(&o.offset, "offset", 0, "偏移量，0–1000000")
@@ -104,14 +105,13 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		if o.mode != "query" && o.mode != "explain" && o.mode != "explain_analyze" {
 			return o, fmt.Errorf("--mode 必须是 query、explain 或 explain_analyze")
 		}
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "limit" || f.Name == "offset" {
+				o.pagination = true
+			}
+		})
 		if o.mode != "query" {
-			pagination := false
-			fs.Visit(func(f *flag.Flag) {
-				if f.Name == "limit" || f.Name == "offset" {
-					pagination = true
-				}
-			})
-			if pagination {
+			if o.pagination {
 				return o, fmt.Errorf("执行计划不支持 --limit 或 --offset，请在 SQL 中指定 LIMIT/OFFSET")
 			}
 		}
@@ -200,7 +200,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 			o.statement = string(raw)
 		}
-		if _, err := mysql.ParseSQL(o.statement); err != nil {
+		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, true); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
@@ -228,6 +228,16 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
+	}
+	if o.command == "query" {
+		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, c.Clusters[id].AllowDML); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 2
+		}
+		if _, err := mysql.ParseSQL(o.statement); err != nil && o.pagination {
+			fmt.Fprintln(stderr, "DML 不支持 --limit 或 --offset，请在 SQL 中指定范围")
+			return 2
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
@@ -319,13 +329,28 @@ func executeQuery(ctx context.Context, reader mysql.Reader, o options, stdout, s
 	if err != nil {
 		message := "读取失败，请检查 schema、表名、SQL、权限或超时；数据库详细错误已隐藏"
 		if o.mode == "explain" || o.mode == "explain_analyze" {
-			message = "执行计划分析失败，请检查 SQL、权限和超时；EXPLAIN ANALYZE 需要 MySQL 8.0.18+ 及受支持的查询"
+			message = "执行计划分析失败，请检查 SQL、权限和超时；请确认数据库支持当前执行计划语法"
+		}
+		if _, parseErr := mysql.ParseSQL(o.statement); parseErr != nil {
+			message = "DML 执行或提交失败，结果可能未确定；请先核对数据库状态，不要直接重试"
 		}
 		fmt.Fprintln(stderr, message)
 		return 1
 	}
+	if result.AffectedRows != nil {
+		if o.format == "json" {
+			return output(o.format, stdout, stderr, result, nil, nil)
+		}
+		headers := []string{"影响行数"}
+		row := []any{*result.AffectedRows}
+		if result.LastInsertID != nil {
+			headers = append(headers, "自增 ID")
+			row = append(row, *result.LastInsertID)
+		}
+		return output(o.format, stdout, stderr, result, headers, [][]any{row})
+	}
 	// Preserve plan indentation and line breaks while escaping terminal controls.
-	if o.mode == "explain_analyze" && o.format == "table" {
+	if o.mode == "explain_analyze" && o.format == "table" && len(result.Columns) == 1 {
 		for _, row := range result.Rows {
 			for _, value := range row {
 				for _, line := range strings.Split(fmt.Sprint(value), "\n") {

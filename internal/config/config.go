@@ -13,6 +13,8 @@ import (
 
 // Cluster keeps credentials private; PasswordEnv overrides the configured password.
 type Cluster struct {
+	Type        string `toml:"type"`
+	AllowDML    bool   `toml:"allow_dml"`
 	Name        string `toml:"name"`
 	Address     string `toml:"address"`
 	User        string `toml:"user"`
@@ -63,6 +65,12 @@ func Read(file string) (Config, error) {
 	}
 	for i := range c.Clusters {
 		cl := &c.Clusters[i]
+		if cl.Type == "" {
+			cl.Type = "mysql"
+		}
+		if cl.Type != "mysql" && cl.Type != "tidb" {
+			return c, fmt.Errorf("连接类型必须是 mysql 或 tidb")
+		}
 		if cl.PasswordEnv != "" {
 			cl.Password = os.Getenv(cl.PasswordEnv)
 		}

@@ -571,7 +571,7 @@
       <div class="brand">
         MySQL Explorer <span class="top-tag">BROWSER</span>
       </div>
-      <div class="profile">只读浏览</div>
+      <div id="accessMode" class="profile">只读浏览</div>
     </header>
     <div class="layout">
       <aside class="sidebar">
@@ -605,7 +605,7 @@
           <div class="panel-title">
             SQL 查询<span id="namespace" class="namespace">选择数据库或表</span>
           </div>
-          <label for="sql-input" class="label">SQL · SELECT</label>
+          <label id="sqlLabel" for="sql-input" class="label">SQL · SELECT</label>
           <div id="sql"></div>
           <div class="query-options">
             <div>
@@ -628,9 +628,10 @@
               执行查询
             </button>
           </div>
+          <p id="accessHint" class="query-hint"></p>
           <p class="query-hint">
-            单条 SELECT · Ctrl / ⌘ + Enter 执行 · 字段备注优先显示 ·
-            大整数与精确小数保留为字符串。执行计划保留原 SQL 的 LIMIT，不追加分页；EXPLAIN ANALYZE 会实际执行查询（MySQL 8.0.18+），超时 12 秒。
+            单条 SQL · Ctrl / ⌘ + Enter 执行 · 字段备注优先显示 ·
+            大整数与精确小数保留为字符串。执行计划保留原 SQL 的 LIMIT，不追加分页；EXPLAIN ANALYZE 会实际执行查询（MySQL 8.0.18+ 或支持该语法的 TiDB），超时 12 秒。
           </p>
         </form>
         <div id="error" class="alert" role="alert" hidden></div>
@@ -650,7 +651,7 @@
           </div>
         </section>
         <div class="footer">
-          <span>MySQL 数据行浏览器</span><span>只读查询 · 按需加载</span>
+          <span>MySQL / TiDB 数据浏览器</span><span id="footerMode">只读查询 · 按需加载</span>
         </div>
       </main>
     </div>
@@ -748,6 +749,14 @@
         schema = Object.create(null);
         updateCompletion();
         lastQuery = null;
+        const writable = clusters[id].allow_dml === true;
+        $("accessMode").textContent = writable ? "允许 DML" : "只读浏览";
+        $("footerMode").textContent = writable ? "允许 DML · 按需加载" : "只读查询 · 按需加载";
+        $("sqlLabel").textContent = writable ? "SQL · SELECT / INSERT / REPLACE / UPDATE / DELETE" : "SQL · SELECT";
+        $("runQuery").textContent = writable ? "执行 SQL" : "执行查询";
+        $("accessHint").textContent = writable
+          ? "当前连接已启用 DML：执行成功即提交。每页条数不限制写入范围，失败或超时后请核对数据库状态，不要直接重试。"
+          : clusters[id].type === "tidb" ? "TiDB 只读模式：通过 SQL 校验限制查询，数据库账号权限作为只读保障。" : "";
         enableQuery(true);
         clearResults();
         showError("");
@@ -955,7 +964,7 @@
             }
           : { ...lastQuery, skip };
         if (!payload.sql.trim()) {
-          showError("请输入 SELECT 查询");
+          showError("请输入 SQL");
           return;
         }
         const token = ++queryToken;
@@ -978,7 +987,18 @@
           rows = out.rows;
           columns = out.columns || [];
           hasMore = out.has_more;
-          renderResults();
+          if (out.affected_rows !== undefined) {
+            $("resultTitle").textContent = "DML 执行结果";
+            $("resultCount").textContent = "已提交";
+            $("results").innerHTML = '<div class="empty"></div>';
+            $("results").firstChild.textContent = "影响行数：" + out.affected_rows +
+              (out.last_insert_id !== undefined ? " · 自增 ID：" + out.last_insert_id : "");
+            $("pageInfo").textContent = "DML 不分页";
+            $("prevPage").disabled = true;
+            $("nextPage").disabled = true;
+          } else {
+            renderResults();
+          }
           status("连接正常");
         } catch (e) {
           if (token !== queryToken || e.name === "AbortError") return;
@@ -995,7 +1015,7 @@
       function renderResults() {
         const plan = lastQuery.mode === "explain" || lastQuery.mode === "explain_analyze";
         $("resultTitle").textContent = plan ? (lastQuery.mode === "explain" ? "EXPLAIN 执行计划" : "EXPLAIN ANALYZE 实际执行计划") : "查询结果";
-        if (lastQuery.mode === "explain_analyze") {
+        if (lastQuery.mode === "explain_analyze" && columns.length === 1) {
           $("results").innerHTML = '<pre class="data" style="margin:16px"></pre>';
           $("results").firstChild.textContent = rows.map(row => row.join("\n")).join("\n");
           $("resultCount").textContent = "实际执行计划";
@@ -1005,7 +1025,7 @@
           return;
         }
         $("resultCount").textContent =
-          `本页 ${rows.length} 条 · ${columns.length} 列${hasMore ? " · 后续还有数据" : ""}`;
+          `${plan ? "计划" : "本页"} ${rows.length} 条 · ${columns.length} 列${hasMore ? " · 后续还有数据" : ""}`;
         const head = columns
           .map((c) => {
             const characters = Array.from(c.comment || "");
@@ -1025,7 +1045,7 @@
           .join("");
         $("results").innerHTML =
           `<table class="result-table"><thead><tr><th>#</th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length + 1}"><div class="empty">没有匹配的数据</div></td></tr>`}</tbody></table>`;
-        $("pageInfo").textContent = rows.length
+        $("pageInfo").textContent = plan ? "分析原 SQL · 未追加分页" : rows.length
           ? `第 ${lastQuery.skip + 1}–${lastQuery.skip + rows.length} 条`
           : "本页没有数据";
         $("prevPage").disabled = plan || lastQuery.skip === 0;

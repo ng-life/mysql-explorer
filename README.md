@@ -1,6 +1,6 @@
 # MySQL Explorer
 
-轻量 Go MySQL 只读浏览器，参考 [Mongo Explorer](https://github.com/ng-life/mongo-explorer) 的界面与按需加载方式。
+轻量 Go MySQL / TiDB 数据浏览器，默认只读，参考 [Mongo Explorer](https://github.com/ng-life/mongo-explorer) 的界面与按需加载方式。
 
 - 启动时按服务预加载账号可见的数据库、表、字段和备注，各服务独立缓存。
 - 展开数据库时检查表名更新；点击表时检查字段及备注更新，再执行默认查询。
@@ -9,7 +9,7 @@
 - 选中表时填入 `SELECT * FROM db_name.table_name`，支持编辑 SQL、分页和快捷键执行。
 - 查询结果使用动态列，优先显示来源字段备注，无备注则显示结果字段名。
 - 支持普通 SELECT、WHERE、ORDER BY、聚合及 JOIN；表别名和字段别名按 SQL 投影位置映射。
-- 仅支持单条 SELECT，在只读事务中执行；不提供数据写入、锁定查询、文件导出或任意存储函数调用。
+- 默认仅支持单条 SELECT；连接可显式启用 TiDB 兼容和 DML。始终拒绝 DDL、锁定 SELECT、文件导出和未知存储函数。
 
 ## 运行
 
@@ -33,7 +33,40 @@ user = "readonly"
 password_env = "MYSQL_EXPLORER_PASSWORD"
 ```
 
-可增加多个 `[[clusters]]`。支持 `password` 或 `password_env`，后者覆盖前者。配置文件已加入 Git 忽略规则；浏览器只接收服务名称和主机端口，错误响应不包含驱动原始错误或凭据。应用无内置登录，远程访问应由现有网络访问控制或认证代理保护，并使用数据库只读账号。
+可增加多个 `[[clusters]]`。支持 `password` 或 `password_env`，后者覆盖前者。配置文件已加入 Git 忽略规则；浏览器只接收服务名称、主机端口和连接能力配置，错误响应不包含驱动原始错误或凭据。应用无内置登录，远程访问应由现有网络访问控制或认证代理保护；只读连接应使用数据库只读账号，写入连接按需授予最小 DML 权限。
+
+## 连接类型与 DML
+
+每个 `[[clusters]]` 独立配置，Web 和 CLI 使用同一策略。修改配置后需重启 Web 服务；CLI 下次运行读取新配置。
+
+```toml
+[[clusters]]
+name = "TiDB 示例"
+type = "tidb"
+address = "127.0.0.1:4000"
+user = "readonly"
+password_env = "TIDB_EXPLORER_PASSWORD"
+allow_dml = false
+```
+
+| 配置项 | 默认值 | 行为 |
+| --- | --- | --- |
+| `type` | `"mysql"` | 仅接受 `"mysql"`、`"tidb"`；不根据端口、版本自动切换 |
+| `allow_dml` | `false` | 启用后允许单条 INSERT、REPLACE、UPDATE、DELETE；适用于两种数据库类型 |
+
+MySQL 的 SELECT 和执行计划继续使用只读事务。TiDB 未实现同等的 READ ONLY 事务保护；显式指定 `type = "tidb"` 后，SELECT 和执行计划使用普通事务，读取结束后回滚，仍执行 AST 校验和函数白名单。TiDB 的只读保障需要数据库账号权限配合；程序不修改 `tidb_enable_noop_functions`，也不会因 MySQL 只读事务失败自动降级。
+
+启用 `allow_dml = true` 后，Web 的「执行 SQL」和 CLI 的 `query` 可执行 DML。每次只执行一条，成功后提交，失败时尝试回滚。应用分页不限制 DML 影响范围；需要限定范围时在 SQL 中明确编写 WHERE 或受支持的 LIMIT。CLI 不接受 DML 的 `--limit`、`--offset`；HTTP 的 DML `skip` 必须为 0，`limit` 不追加到 DML。执行计划仅接受 SELECT，即使允许 DML，也不允许通过 EXPLAIN ANALYZE 执行写入。
+
+DML 响应保留 `columns`、`rows`、`has_more`，并增加字符串字段 `affected_rows`；INSERT / REPLACE 还返回字符串字段 `last_insert_id`，无自增值时通常为 `"0"`。DML 不分页。Web 显示提交结果，CLI 默认显示影响行数及自增 ID；`--format json` 返回原始结构。
+
+```sh
+# 仅对配置中已启用 allow_dml 的连接生效；此命令会修改数据
+mysql-explorer query --connection 写入环境 --schema sales \
+  --sql "UPDATE orders SET status = 'closed' WHERE id = 123" --format json
+```
+
+应用不自动重试 DML。超时、断连或提交失败后，实际提交结果可能不明确，应先核对数据库状态；非事务表或触发器等数据库行为也可能影响回滚边界。启用 DML 前应配置访问控制，并限制数据库账号的写入权限。
 
 ## 查询
 
@@ -53,20 +86,20 @@ ORDER BY o.id DESC
 
 结果列按 SQL 返回顺序显示。直接字段、字段别名、`*`、`table.*` 和普通 JOIN 会解析来源表的 `COLUMN_COMMENT`。无备注、表达式、UNION 或无法确定来源的列显示结果字段名；派生表及 JOIN USING 等复杂投影可能回退为字段名。同名列独立保留，不覆盖数据。
 
-SQL 使用 AST 校验，只接收单条 SELECT。常用聚合、字符串、日期和 JSON 函数可用；未知函数、锁定查询和文件导出会被拒绝。当前不支持 CTE 和窗口函数等部分 MySQL 8 语法。解析后重新生成 SQL，移除注释，避免执行注释绕过校验。
+SELECT 使用 AST 校验；配置启用 DML 后，DML 也经过同一函数白名单和单语句校验。常用聚合、字符串、日期和 JSON 函数可用；未知函数、锁定查询和文件导出会被拒绝。当前不支持 CTE 和窗口函数等部分 MySQL 8 语法。解析后重新生成 SQL，移除注释，避免执行注释绕过校验。
 
 每页最多 200 条，自动设置 LIMIT/OFFSET，多读一条判断下一页。原 SQL 的 LIMIT 是结果总数上限，分页保留原 OFFSET；翻页使用已执行的 SQL，修改编辑框后需点击执行查询。无 ORDER BY 时不保证结果顺序，并发变化时不保证跨页快照一致。偏移量上限 1000000，请求超时 12 秒，每页行内容上限 32 MiB；单个大字段仍需先由驱动读取。
 
-整数与 DECIMAL 以字符串返回，防止浏览器丢失精度。NULL 单独显示，二进制显示 Base64，日期时间保留数据库文本格式。服务器需要支持只读事务。
+整数与 DECIMAL 以字符串返回，防止浏览器丢失精度。NULL 单独显示，二进制显示 Base64，日期时间保留数据库文本格式。MySQL 服务器需要支持只读事务，TiDB 使用上文的兼容路径。
 
 ## SQL 执行计划
 
-在编辑器输入单条 SELECT，点击「EXPLAIN」查看表格执行计划，点击「EXPLAIN ANALYZE」查看包含实际耗时、行数和循环次数的文本树。无需手动添加 EXPLAIN 前缀。
+在编辑器输入单条 SELECT，点击「EXPLAIN」查看表格执行计划，点击「EXPLAIN ANALYZE」查看实际执行计划；MySQL 显示文本树，TiDB 显示多列表格。无需手动添加 EXPLAIN 前缀。
 
-- EXPLAIN 使用 `FORMAT=TRADITIONAL`，保持表格输出。
-- EXPLAIN ANALYZE 会实际执行 SELECT，需要 MySQL 8.0.18+；数据库版本和查询类型不支持时显示错误，不自动回退或重复执行。
+- MySQL 的 EXPLAIN 使用 `FORMAT=TRADITIONAL`；TiDB 使用默认 EXPLAIN 格式，均显示表格。
+- EXPLAIN ANALYZE 会实际执行 SELECT，需要 MySQL 8.0.18+ 或支持该语法的 TiDB；数据库版本和查询类型不支持时显示错误，不自动回退或重复执行。
 - 分析保留原 SQL 的 LIMIT/OFFSET，不追加应用分页，页面的每页条数不影响执行计划。分析大表时可先自行限制 SQL。
-- 沿用 SELECT AST 校验、函数白名单、注释清除、只读事务、12 秒请求超时和 32 MiB 返回内容限制。执行计划不分页，返回完整计划。
+- 沿用 SELECT AST 校验、函数白名单、注释清除、按连接类型选择的事务、12 秒请求超时和 32 MiB 返回内容限制。执行计划不分页，返回完整计划。
 - Web API：`POST /api/clusters/{id}/rows/query` 支持 `mode` 为 `query`（默认）、`explain` 或 `explain_analyze`；SQL 字段仍传入 SELECT，计划模式的 `skip` 必须为 0。响应沿用 `columns`、`rows`、`has_more`，计划的 `has_more` 为 false。
 
 ## 编辑器开发
@@ -90,7 +123,7 @@ make check
 make build
 ```
 
-测试覆盖 SELECT 校验、危险语句拒绝、LIMIT 分页、字段备注来源解析、同名列与整数精度、HTTP 校验和凭据隐藏。推送 `v*` 标签后，GitHub Actions 验证并发布 Linux x86_64 与 macOS arm64 二进制。
+测试覆盖连接类型、DML 开关及提交/回滚、TiDB 计划列、SELECT 校验、危险语句拒绝、LIMIT 分页、字段备注来源解析、同名列与整数精度、HTTP 校验和凭据隐藏。推送 `v*` 标签后，GitHub Actions 验证并发布 Linux x86_64 与 macOS arm64 二进制。
 
 ## Ubuntu systemd
 
@@ -169,9 +202,9 @@ mysql-explorer query --help
 
 默认使用 Lip Gloss 渲染圆角表格和彩色表头，中文按终端显示宽度对齐。长内容自动换行，窄终端在多列无法容纳时按记录纵向展示字段和值；空结果显示「无数据」。重定向输出及设置 `NO_COLOR` 时不输出 ANSI 样式。控制字符使用转义形式，NULL 显示为 `NULL`，空字符串显示为 `""`。所有 CLI 数据命令支持 `--format json`，JSON 保留原始值。查询 JSON 沿用 Web 的 `columns`、二维数组 `rows` 和 `has_more`，不会因列名重复覆盖数据。表格查询输出也包含行数及 `has_more`；当前页不是完整结果时，使用 `--offset` 继续查询。
 
-`query --mode` 支持 `query`（默认）、`explain`、`explain_analyze`。计划模式复用 SQL 文件和标准输入，保留 SQL 本身的 LIMIT/OFFSET，不接受 `--limit` 或 `--offset`。EXPLAIN ANALYZE 会实际执行 SELECT，不自动重试或回退；版本或查询类型不支持时返回退出码 1。表格模式下 EXPLAIN 显示表格，EXPLAIN ANALYZE 直接显示文本树；JSON 不附加提示或分页摘要。
+`query --mode` 支持 `query`（默认）、`explain`、`explain_analyze`。计划模式复用 SQL 文件和标准输入，保留 SQL 本身的 LIMIT/OFFSET，不接受 `--limit` 或 `--offset`。EXPLAIN ANALYZE 会实际执行 SELECT，不自动重试或回退；版本或查询类型不支持时返回退出码 1。表格模式下 EXPLAIN 显示表格，EXPLAIN ANALYZE 在 MySQL 下显示文本树，TiDB 下显示多列表格；JSON 不附加提示或分页摘要。
 
-CLI 沿用单条 SELECT 校验、函数白名单、只读事务、分页上限、32 MiB 行内容限制和 12 秒请求超时。SQL 原有 LIMIT/OFFSET 与 CLI 分页按 Web 相同规则组合，不自动读取全部结果。字段结构 JSON 的 `default: null` 与 `default: ""` 分别表示 SQL NULL 与空字符串默认值。
+CLI 沿用连接级 SQL 策略、函数白名单和事务规则；SELECT 保留分页上限、32 MiB 行内容限制和 12 秒请求超时。SQL 原有 LIMIT/OFFSET 与 CLI 分页按 Web 相同规则组合，不自动读取全部结果。字段结构 JSON 的 `default: null` 与 `default: ""` 分别表示 SQL NULL 与空字符串默认值。
 
 数据写入 stdout，参数或运行错误写入 stderr；数据库原始错误不直接输出。退出码：`0` 成功（包括空结果），`1` 配置、连接、读取或输出失败，`2` 参数或 SQL 校验失败。帮助命令不加载配置、不连接数据库。
 

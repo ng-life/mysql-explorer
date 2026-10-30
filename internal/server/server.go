@@ -18,7 +18,7 @@ type provider interface {
 	Get(context.Context, int) (mysql.Reader, error)
 }
 
-// Server serves the browser and exposes only MySQL read operations.
+// Server serves the browser with connection-scoped SQL permissions.
 type Server struct {
 	config config.Config
 	pool   provider
@@ -31,7 +31,7 @@ func respond(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// Handler returns the browser and read-only API routes.
+// Handler returns the browser and API routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /assets/", http.FileServerFS(web.Assets))
@@ -41,12 +41,14 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /api/clusters", func(w http.ResponseWriter, r *http.Request) {
 		type publicCluster struct {
-			Name    string `json:"name"`
-			Address string `json:"address"`
+			Name     string `json:"name"`
+			Address  string `json:"address"`
+			Type     string `json:"type"`
+			AllowDML bool   `json:"allow_dml"`
 		}
 		out := []publicCluster{}
 		for _, cl := range s.config.Clusters {
-			out = append(out, publicCluster{cl.Name, cl.Address})
+			out = append(out, publicCluster{cl.Name, cl.Address, cl.Type, cl.AllowDML})
 		}
 		respond(w, out)
 	})
@@ -153,7 +155,13 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "每页 1–200 条，偏移量 0–1000000", 400)
 		return
 	}
-	if _, err := mysql.ParseSQL(in.SQL); err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id < 0 || id >= len(s.config.Clusters) {
+		http.Error(w, "未知的 MySQL 服务", 404)
+		return
+	}
+	q := mysql.Query{Mode: in.Mode, SQL: in.SQL, Limit: in.Limit, Skip: in.Skip}
+	if err := mysql.ValidateQuery(q, s.config.Clusters[id].AllowDML); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
@@ -163,11 +171,14 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := client.Execute(r.Context(), in.Database, mysql.Query{Mode: in.Mode, SQL: in.SQL, Limit: in.Limit, Skip: in.Skip})
+	out, err := client.Execute(r.Context(), in.Database, q)
 	if err != nil {
 		message := "查询失败，请检查 SQL、数据库和权限；结果过大时减少每页条数"
 		if in.Mode == "explain" || in.Mode == "explain_analyze" {
-			message = "执行计划分析失败，请检查 SQL、权限和超时；EXPLAIN ANALYZE 需要 MySQL 8.0.18+ 及受支持的查询"
+			message = "执行计划分析失败，请检查 SQL、权限和超时；请确认数据库支持当前执行计划语法"
+		}
+		if _, parseErr := mysql.ParseSQL(in.SQL); parseErr != nil {
+			message = "DML 执行或提交失败，结果可能未确定；请先核对数据库状态，不要直接重试"
 		}
 		http.Error(w, message, 502)
 		return

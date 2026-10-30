@@ -27,9 +27,11 @@ type Query struct {
 	Skip  int    `json:"skip"`
 }
 type Result struct {
-	Rows    [][]any  `json:"rows"`
-	Columns []Column `json:"columns"`
-	HasMore bool     `json:"has_more"`
+	AffectedRows *string  `json:"affected_rows,omitempty"`
+	LastInsertID *string  `json:"last_insert_id,omitempty"`
+	Rows         [][]any  `json:"rows"`
+	Columns      []Column `json:"columns"`
+	HasMore      bool     `json:"has_more"`
 }
 type Reader interface {
 	RefreshTables(context.Context, string) ([]string, error)
@@ -43,6 +45,8 @@ type Reader interface {
 }
 type Client struct {
 	DB        *sql.DB
+	Type      string
+	AllowDML  bool
 	catalogMu sync.RWMutex
 	refreshMu sync.Mutex
 	catalog   *Catalog
@@ -81,7 +85,7 @@ func (p *Pool) Get(ctx context.Context, id int) (Reader, error) {
 		db.Close()
 		return nil, err
 	}
-	c := &Client{DB: db}
+	c := &Client{DB: db, Type: cl.Type, AllowDML: cl.AllowDML}
 	p.clients[id] = c
 	return c, nil
 }

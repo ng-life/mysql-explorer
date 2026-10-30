@@ -193,3 +193,63 @@ func TestCLIPlanDispatchAndOutput(t *testing.T) {
 		t.Fatal(code, out.String(), errs.String())
 	}
 }
+
+func TestCLIDMLConfigValidation(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		body := fmt.Sprintf("[[clusters]]\nname='offline'\naddress='127.0.0.1:1'\nuser='reader'\nallow_dml=%t\n", enabled)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var out, errs bytes.Buffer
+		args := []string{"query", "--config", path, "--sql", "DELETE FROM sales.orders WHERE id=1"}
+		if enabled {
+			args = append(args, "--limit", "20")
+		}
+		if code := Run(context.Background(), args, strings.NewReader(""), &out, &errs); code != 2 || out.Len() != 0 {
+			t.Fatal(code, out.String(), errs.String())
+		}
+		want := "allow_dml"
+		if enabled {
+			want = "不支持 --limit"
+		}
+		if !strings.Contains(errs.String(), want) {
+			t.Fatal(errs.String())
+		}
+	}
+}
+
+type dmlResultReader struct {
+	mysql.Reader
+	failure bool
+}
+
+func (r dmlResultReader) Execute(context.Context, string, mysql.Query) (mysql.Result, error) {
+	if r.failure {
+		return mysql.Result{}, fmt.Errorf("private-password")
+	}
+	n, id := "2", "9007199254740993"
+	return mysql.Result{Rows: [][]any{}, Columns: []mysql.Column{}, AffectedRows: &n, LastInsertID: &id}, nil
+}
+func TestCLIDMLResult(t *testing.T) {
+	for _, format := range []string{"table", "json"} {
+		var out, errs bytes.Buffer
+		o := options{mode: "query", format: format, statement: "INSERT INTO sales.orders(id) VALUES(1)"}
+		if code := executeQuery(context.Background(), dmlResultReader{}, o, &out, &errs); code != 0 {
+			t.Fatal(code, errs.String())
+		}
+		if format == "json" {
+			var result mysql.Result
+			if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.AffectedRows == nil || *result.AffectedRows != "2" || *result.LastInsertID != "9007199254740993" {
+				t.Fatal(out.String(), err)
+			}
+		} else if !strings.Contains(out.String(), "影响行数") || strings.Contains(out.String(), "has_more") {
+			t.Fatal(out.String())
+		}
+		out.Reset()
+		errs.Reset()
+		if code := executeQuery(context.Background(), dmlResultReader{failure: true}, o, &out, &errs); code != 1 || out.Len() != 0 || !strings.Contains(errs.String(), "不要直接重试") || strings.Contains(errs.String(), "private-password") {
+			t.Fatal(code, out.String(), errs.String())
+		}
+	}
+}

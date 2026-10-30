@@ -10,7 +10,7 @@
 
 ## 项目概况与目录
 
-MySQL Explorer 是使用 Go 实现的轻量 MySQL 只读浏览器，支持多个服务、元数据缓存、SQL 编辑和分页查询。HTML 与编辑器 bundle 嵌入二进制，运行时无需 Node.js 或外部 CDN。
+MySQL Explorer 是使用 Go 实现的默认只读的 MySQL / TiDB 数据浏览器，支持多个服务、元数据缓存、SQL 编辑和分页查询。HTML 与编辑器 bundle 嵌入二进制，运行时无需 Node.js 或外部 CDN。
 
 - `cmd/mysql-explorer/main.go`：程序入口、配置加载和退出信号处理。
 - `internal/config/`：命令行参数、默认配置路径与 TOML 配置。
@@ -49,7 +49,8 @@ go run ./cmd/mysql-explorer --config config.toml
 
 ## 必须保持的行为与安全边界
 
-- 保持只读定位：仅接受通过 AST 校验的单条 SELECT，在只读事务中执行。保留函数白名单、锁定查询拒绝和执行注释清除机制，不绕过校验直接执行原始 SQL。
+- 连接默认 `type = "mysql"`、`allow_dml = false`。MySQL 的 SELECT 使用只读事务；仅显式 `type = "tidb"` 时使用普通事务并在读取后回滚，不自动降级或开启 TiDB noop 参数。TiDB 只读连接应使用数据库只读账号。
+- 仅 `allow_dml = true` 的连接允许单条 INSERT、REPLACE、UPDATE、DELETE，成功提交，失败尝试回滚；DML 不追加应用分页、不自动重试。DDL、多语句、锁定 SELECT 和未知函数始终拒绝；执行计划仅接受 SELECT。保留 AST 校验、函数白名单、执行注释清除，不执行未经校验的原始 SQL。
 - 保留分页限制、查询超时和结果大小限制；原 SQL 的 LIMIT/OFFSET 与应用分页组合语义以现有实现和测试为准。
 - 整数与 DECIMAL 使用字符串返回，避免浏览器精度丢失；保留 NULL、二进制、日期时间及同名结果列的现有表示。
 - 字段备注映射应保持结果列顺序，无法确定来源时回退为结果字段名。

@@ -46,3 +46,35 @@ func TestDefaultPath(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestConnectionCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		extra, kind  string
+		write, valid bool
+	}{
+		{"", "mysql", false, true},
+		{"type='tidb'", "tidb", false, true},
+		{`type='mysql'
+allow_dml=true`, "mysql", true, true},
+		{`type='tidb'
+allow_dml=true`, "tidb", true, true},
+		{"type='unknown'", "", false, false},
+		{"allow_dml='true'", "", false, false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(`[[clusters]]
+name='test'
+address='localhost:4000'
+user='reader'
+`+tc.extra), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Read(path)
+		if (err == nil) != tc.valid {
+			t.Fatal(tc.extra, err)
+		}
+		if tc.valid && (cfg.Clusters[0].Type != tc.kind || cfg.Clusters[0].AllowDML != tc.write) {
+			t.Fatal(cfg.Clusters[0].Type, cfg.Clusters[0].AllowDML)
+		}
+	}
+}

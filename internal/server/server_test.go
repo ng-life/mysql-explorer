@@ -76,3 +76,49 @@ func TestExplainHTTPModes(t *testing.T) {
 		}
 	}
 }
+
+type queryRecorder struct {
+	fake
+	calls int
+	query mysql.Query
+}
+
+func (r *queryRecorder) Get(context.Context, int) (mysql.Reader, error) { r.calls++; return r, nil }
+func (r *queryRecorder) Execute(_ context.Context, _ string, q mysql.Query) (mysql.Result, error) {
+	r.query = q
+	n := "0"
+	return mysql.Result{AffectedRows: &n, Rows: [][]any{}, Columns: []mysql.Column{}}, nil
+}
+func TestDMLHTTPConnectionPolicy(t *testing.T) {
+	reader := &queryRecorder{}
+	h := New(config.Config{Clusters: []config.Cluster{{Name: "readonly", Type: "tidb"}, {Name: "writable", AllowDML: true}}}, reader).Handler()
+	for _, tc := range []struct {
+		path, body string
+		status     int
+	}{
+		{"/api/clusters/0/rows/query", `{"sql":"DELETE FROM sales.orders"}`, 400},
+		{"/api/clusters/1/rows/query", `{"sql":"DELETE FROM sales.orders","mode":"explain_analyze"}`, 400},
+		{"/api/clusters/1/rows/query", `{"sql":"DELETE FROM sales.orders","skip":20}`, 400},
+		{"/api/clusters/1/rows/query", `{"sql":"DROP TABLE sales.orders"}`, 400},
+		{"/api/clusters/1/rows/query", `{"sql":"DELETE FROM sales.orders","allow_dml":true}`, 400},
+		{"/api/clusters/1/rows/query", `{"sql":"DELETE FROM sales.orders WHERE id=1"}`, 200},
+	} {
+		before := reader.calls
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", tc.path, strings.NewReader(tc.body)))
+		if w.Code != tc.status {
+			t.Fatal(tc.body, w.Code, w.Body.String())
+		}
+		if tc.status == 400 && reader.calls != before {
+			t.Fatal("invalid SQL opened connection")
+		}
+		if tc.status == 200 && (!strings.Contains(w.Body.String(), `"affected_rows":"0"`) || reader.query.SQL != "DELETE FROM sales.orders WHERE id=1") {
+			t.Fatal(w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/clusters", nil))
+	if !strings.Contains(w.Body.String(), `"allow_dml":true`) || !strings.Contains(w.Body.String(), `"type":"tidb"`) {
+		t.Fatal(w.Body.String())
+	}
+}

@@ -12,16 +12,57 @@ import (
 	"github.com/xwb1989/sqlparser"
 )
 
-// ParseSQL validates the AST, then reserializes it so executable comments cannot
-// introduce operations that were invisible to the parser.
+// ParseSQL preserves the SELECT-only contract used by existing callers.
 func ParseSQL(statement string) (sqlparser.SelectStatement, error) {
+	node, err := parseStatement(statement, false)
+	if err != nil {
+		return nil, err
+	}
+	return node.(sqlparser.SelectStatement), nil
+}
+
+// ValidateQuery applies the selected connection's policy before network access.
+func ValidateQuery(q Query, allowDML bool) error {
+	_, err := parseQuery(q, allowDML)
+	return err
+}
+
+func parseQuery(q Query, allowDML bool) (sqlparser.Statement, error) {
+	if q.Mode != "" && q.Mode != "query" && q.Mode != "explain" && q.Mode != "explain_analyze" {
+		return nil, fmt.Errorf("不支持的执行模式")
+	}
+	node, err := parseStatement(q.SQL, allowDML)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := node.(sqlparser.SelectStatement); !ok {
+		if q.Mode != "" && q.Mode != "query" {
+			return nil, fmt.Errorf("执行计划仅支持 SELECT")
+		}
+		if q.Skip != 0 {
+			return nil, fmt.Errorf("DML 不支持分页")
+		}
+	} else if q.Mode != "" && q.Mode != "query" && q.Skip != 0 {
+		return nil, fmt.Errorf("执行计划不支持分页")
+	}
+	return node, nil
+}
+
+// parseStatement rejects multi-statements and reserializes the allowed AST,
+// removing executable comments before either reads or writes can reach the driver.
+func parseStatement(statement string, allowDML bool) (sqlparser.Statement, error) {
 	node, err := sqlparser.Parse(statement)
 	if err != nil {
-		return nil, fmt.Errorf("SQL 语法不受支持，请输入单条 SELECT")
+		return nil, fmt.Errorf("SQL 语法不受支持，请输入单条 SELECT 或已启用的 DML")
 	}
-	selectNode, ok := node.(sqlparser.SelectStatement)
-	if !ok {
-		return nil, fmt.Errorf("仅支持单条 SELECT 查询")
+	switch node.(type) {
+	case sqlparser.SelectStatement:
+	case *sqlparser.Insert, *sqlparser.Update, *sqlparser.Delete:
+		if !allowDML {
+			return nil, fmt.Errorf("当前连接未启用 allow_dml，仅支持单条 SELECT")
+		}
+	default:
+		return nil, fmt.Errorf("仅支持单条 SELECT 或已启用的 INSERT、REPLACE、UPDATE、DELETE")
 	}
 	err = sqlparser.Walk(func(n sqlparser.SQLNode) (bool, error) {
 		switch v := n.(type) {
@@ -29,6 +70,12 @@ func ParseSQL(statement string) (sqlparser.SelectStatement, error) {
 			if v.Lock != "" {
 				return false, fmt.Errorf("不支持锁定查询")
 			}
+			v.Comments = nil
+		case *sqlparser.Insert:
+			v.Comments = nil
+		case *sqlparser.Update:
+			v.Comments = nil
+		case *sqlparser.Delete:
 			v.Comments = nil
 		case *sqlparser.Union:
 			if v.Lock != "" {
@@ -43,8 +90,8 @@ func ParseSQL(statement string) (sqlparser.SelectStatement, error) {
 			}
 		}
 		return true, nil
-	}, selectNode)
-	return selectNode, err
+	}, node)
+	return node, err
 }
 
 func pageSQL(node sqlparser.SelectStatement, q Query) (string, error) {
@@ -213,13 +260,16 @@ func (c *Client) resultColumns(ctx context.Context, database string, node sqlpar
 }
 func (c *Client) Execute(ctx context.Context, database string, q Query) (Result, error) {
 	out := Result{Rows: [][]any{}, Columns: []Column{}}
-	node, err := ParseSQL(q.SQL)
+	node, err := parseQuery(q, c.AllowDML)
 	if err != nil {
 		return out, err
 	}
 	// A pooled connection may retain a previous USE database. Require explicit
 	// qualification when no database is selected to prevent querying that stale database.
 	if database == "" {
+		if insert, ok := node.(*sqlparser.Insert); ok && insert.Table.Qualifier.IsEmpty() {
+			return out, fmt.Errorf("请选择数据库，或在 SQL 中使用完整表名")
+		}
 		err := sqlparser.Walk(func(n sqlparser.SQLNode) (bool, error) {
 			if table, ok := n.(*sqlparser.AliasedTableExpr); ok {
 				if name, ok := table.Expr.(sqlparser.TableName); ok && name.Qualifier.IsEmpty() && name.Name.String() != "dual" {
@@ -232,11 +282,21 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 			return out, err
 		}
 	}
-	statement, err := querySQL(node, q)
-	if err != nil {
-		return out, err
+	selectNode, isSelect := node.(sqlparser.SelectStatement)
+	statement := sqlparser.String(node)
+	if isSelect {
+		statement, err = querySQL(selectNode, q)
+		if err != nil {
+			return out, err
+		}
+		if c.Type == "tidb" && q.Mode == "explain" {
+			statement = "EXPLAIN " + sqlparser.String(node)
+		}
 	}
-	tx, err := c.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	// TiDB has no enforced READ ONLY transaction mode. Explicit type=tidb
+	// retains AST restrictions and rolls reads back; database grants enforce
+	// read-only access. Never silently downgrade a MySQL read-only transaction.
+	tx, err := c.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: isSelect && c.Type != "tidb"})
 	if err != nil {
 		return out, err
 	}
@@ -245,6 +305,30 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 		if _, err := tx.ExecContext(ctx, "USE "+quoteIdentifier(database)); err != nil {
 			return out, err
 		}
+	}
+	if !isSelect {
+		result, err := tx.ExecContext(ctx, statement)
+		if err != nil {
+			return out, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return out, err
+		}
+		affectedText := strconv.FormatInt(affected, 10)
+		out.AffectedRows = &affectedText
+		if _, ok := node.(*sqlparser.Insert); ok {
+			id, err := result.LastInsertId()
+			if err != nil {
+				return out, err
+			}
+			idText := strconv.FormatInt(id, 10)
+			out.LastInsertID = &idText
+		}
+		if err := tx.Commit(); err != nil {
+			return Result{}, err
+		}
+		return out, nil
 	}
 	rows, err := tx.QueryContext(ctx, statement)
 	if err != nil {
@@ -307,7 +391,7 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 		return out, err
 	}
 	if q.Mode == "" || q.Mode == "query" {
-		out.Columns = c.resultColumns(ctx, database, node, names)
+		out.Columns = c.resultColumns(ctx, database, selectNode, names)
 	} else {
 		// Plan columns describe optimizer output, not the SELECT projection.
 		for _, name := range names {

@@ -22,12 +22,35 @@
 .grid-cell-dialog textarea { display: block; width: 100%; height: min(50vh, 420px); resize: vertical; margin-bottom: 12px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 7px; font: 12px/1.7 ui-monospace, monospace; }
 @media (max-width: 680px) { .grid-toolbar { padding: 10px; } }
 
-.grid-horizontal-scroll { display: flex; align-items: center; gap: 12px; padding: 7px 14px; border-bottom: 1px solid #eaecf0; background: #f9fafb; font-size: 11px; color: #667085; }
-.grid-horizontal-scroll[hidden] { display: none; }
-.grid-horizontal-scroll span { white-space: nowrap; }
-.grid-horizontal-scroll input { flex: 1; min-width: 0; width: 100%; height: 16px; margin: 0; cursor: ew-resize; appearance: none; background: transparent; }
-.grid-horizontal-scroll input::-webkit-slider-runnable-track { height: 8px; background: #e4e7ec; border-radius: 4px; }
-.grid-horizontal-scroll input::-webkit-slider-thumb { appearance: none; width: 40px; height: 12px; margin-top: -2px; border-radius: 6px; background: #667085; border: 1px solid white; }
-.grid-horizontal-scroll input::-moz-range-track { height: 8px; background: #e4e7ec; border-radius: 4px; }
-.grid-horizontal-scroll input::-moz-range-thumb { width: 40px; height: 12px; border-radius: 6px; background: #667085; border: 1px solid white; }
-.grid-horizontal-scroll input:focus-visible { outline: 2px solid #1677ff; outline-offset: 3px; border-radius: 4px; }
+/* macOS 与部分浏览器的浮层滚动条在停止滚动后会自动隐藏，宽表因此难以判断
+   还有多少横向内容。显式声明滚动条样式会把 Tabulator 的滚动容器切换成
+   经典滚动条，只要内容溢出就常驻显示；无溢出时仍不占用空间。 */
+.tabulator .tabulator-tableholder {
+  overflow-x: auto;
+}
+.tabulator .tabulator-tableholder::-webkit-scrollbar {
+  width: 12px;
+  height: 14px;
+}
+.tabulator .tabulator-tableholder::-webkit-scrollbar-track {
+  background: #f2f4f7;
+}
+.tabulator .tabulator-tableholder::-webkit-scrollbar-thumb {
+  background: #98a2b3;
+  border: 3px solid #f2f4f7;
+  border-radius: 8px;
+}
+.tabulator .tabulator-tableholder::-webkit-scrollbar-thumb:hover {
+  background: #667085;
+}
+.tabulator .tabulator-tableholder::-webkit-scrollbar-corner {
+  background: #f2f4f7;
+}
+/* 标准滚动条属性会让 Chrome 放弃 ::-webkit-scrollbar 定制并回落到浮层滚动条，
+   因此只在完全不支持 ::-webkit-scrollbar 的浏览器（如 Firefox）中启用。 */
+@supports not selector(::-webkit-scrollbar) {
+  .tabulator .tabulator-tableholder {
+    scrollbar-width: thin;
+    scrollbar-color: #98a2b3 #f2f4f7;
+  }
+}

@@ -40,22 +40,7 @@ window.createResultGrid = (container, columns, rows, skip = 0) => {
   toolbar.append(hint, feedback, chooser, inspect, copy);
   const element = document.createElement("div");
   element.setAttribute("aria-label", "SQL 查询结果");
-  // A native range control remains visible on systems with auto-hidden overlay
-  // scrollbars. Keep the actual Tabulator scroll holder as the source of truth.
-  const horizontal = document.createElement("label");
-  horizontal.className = "grid-horizontal-scroll";
-  horizontal.hidden = true;
-  const scrollLabel = document.createElement("span");
-  scrollLabel.textContent = "横向滚动";
-  const scrollbar = document.createElement("input");
-  scrollbar.type = "range";
-  scrollbar.min = "0";
-  scrollbar.max = "1";
-  scrollbar.step = "1";
-  scrollbar.value = "0";
-  scrollbar.setAttribute("aria-label", "横向滚动查询结果");
-  horizontal.append(scrollLabel, scrollbar);
-  container.replaceChildren(toolbar, horizontal, element);
+  container.replaceChildren(toolbar, element);
 
   const dialog = document.createElement("dialog");
   dialog.className = "grid-cell-dialog";
@@ -130,27 +115,6 @@ window.createResultGrid = (container, columns, rows, skip = 0) => {
       accessorClipboard: (value) => valueText(value),
     })),
   });
-  function syncHorizontalScroll() {
-    const holder = element.querySelector(".tabulator-tableholder");
-    if (!holder) return;
-    const max = Math.max(0, holder.scrollWidth - holder.clientWidth);
-    horizontal.hidden = max <= 1;
-    scrollbar.max = String(max);
-    scrollbar.value = String(holder.scrollLeft);
-  }
-  scrollbar.oninput = () => {
-    const holder = element.querySelector(".tabulator-tableholder");
-    if (holder) holder.scrollLeft = Number(scrollbar.value);
-  };
-  const resizeObserver = new ResizeObserver(syncHorizontalScroll);
-  resizeObserver.observe(element);
-  grid.on("tableBuilt", () => {
-    element.querySelector(".tabulator-tableholder").addEventListener("scroll", syncHorizontalScroll, { passive: true });
-    syncHorizontalScroll();
-  });
-  for (const event of ["renderComplete", "columnResized", "columnMoved", "columnVisibilityChanged"]) {
-    grid.on(event, syncHorizontalScroll);
-  }
   const firstCell = () => grid.getRanges()[0]?.getCells()[0]?.find((cell) => cell.getField()?.startsWith("c"));
   const updateSelection = () => {
     copy.disabled = !firstCell();
@@ -188,5 +152,5 @@ window.createResultGrid = (container, columns, rows, skip = 0) => {
     label.append(input, document.createTextNode(column.name + (column.comment ? " · " + column.comment : "")));
     choices.append(label);
   });
-  return { destroy() { resizeObserver.disconnect(); grid.destroy(); dialog.remove(); } };
+  return { destroy() { grid.destroy(); dialog.remove(); } };
 };

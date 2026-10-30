@@ -19,11 +19,11 @@ func (fake) Execute(context.Context, string, mysql.Query) (mysql.Result, error) 
 	return mysql.Result{Rows: [][]any{{"9007199254740993"}}, Columns: []mysql.Column{{Name: "id", Key: "PRI"}}}, nil
 }
 func TestReadOnlyHTTP(t *testing.T) {
-	h := New(config.Config{Clusters: []config.Cluster{{Name: "test", Address: "localhost:3306", User: "private-user", Password: "private-password"}}}, fake{}).Handler()
-	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop", "/api/clusters/0/columns?db=shop&table=orders", "/assets/editor.js", "/api/clusters/0/metadata"} {
+	h := New(config.Config{Clusters: []config.Cluster{{Name: "test", Description: "web-hidden-description", Address: "localhost:3306", User: "private-user", Password: "private-password"}}}, fake{}).Handler()
+	for _, path := range []string{"/", "/api/clusters", "/api/clusters/0/databases", "/api/clusters/0/tables?db=shop", "/api/clusters/0/columns?db=shop&table=orders", "/assets/editor.js", "/assets/result-grid.js", "/assets/result-grid.css", "/assets/result-grid.LICENSE.txt", "/api/clusters/0/metadata"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		if w.Code != 200 || strings.Contains(w.Body.String(), "private-password") || strings.Contains(w.Body.String(), "private-user") {
+		if w.Code != 200 || strings.Contains(w.Body.String(), "private-password") || strings.Contains(w.Body.String(), "private-user") || strings.Contains(w.Body.String(), "web-hidden-description") {
 			t.Fatalf("unsafe response %d", w.Code)
 		}
 	}
@@ -119,6 +119,38 @@ func TestDMLHTTPConnectionPolicy(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/clusters", nil))
 	if !strings.Contains(w.Body.String(), `"allow_dml":true`) || !strings.Contains(w.Body.String(), `"type":"tidb"`) {
+		t.Fatal(w.Body.String())
+	}
+}
+
+func TestDDLHTTPConnectionPolicy(t *testing.T) {
+	reader := &queryRecorder{}
+	h := New(config.Config{Clusters: []config.Cluster{{Name: "readonly"}, {Name: "dml", AllowDML: true}, {Name: "ddl", AllowDDL: true}}}, reader).Handler()
+	for _, tc := range []struct {
+		id, sql, extra string
+		status         int
+	}{
+		{"0", "DROP TABLE sales.t", "", 400},
+		{"1", "DROP TABLE sales.t", "", 400},
+		{"2", "DELETE FROM sales.t", "", 400},
+		{"2", "ALTER TABLE sales.t ADD x int", "", 200},
+		{"2", "ALTER TABLE sales.t ADD x int", `,"mode":"explain_analyze"`, 400},
+		{"2", "ALTER TABLE sales.t ADD x int; DROP TABLE sales.t", "", 400},
+		{"0", "DROP TABLE sales.t", `,"allow_ddl":true`, 400},
+	} {
+		before := reader.calls
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("POST", "/api/clusters/"+tc.id+"/rows/query", strings.NewReader(`{"database":"sales","sql":"`+tc.sql+`"`+tc.extra+`}`)))
+		if w.Code != tc.status {
+			t.Fatal(tc, w.Code, w.Body.String())
+		}
+		if tc.status == 400 && reader.calls != before {
+			t.Fatal("invalid DDL opened connection")
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/clusters", nil))
+	if !strings.Contains(w.Body.String(), `"allow_ddl":true`) || !strings.Contains(w.Body.String(), `"allow_ddl":false`) {
 		t.Fatal(w.Body.String())
 	}
 }

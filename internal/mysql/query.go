@@ -14,7 +14,7 @@ import (
 
 // ParseSQL preserves the SELECT-only contract used by existing callers.
 func ParseSQL(statement string) (sqlparser.SelectStatement, error) {
-	node, err := parseStatement(statement, false)
+	node, err := parseStatement(statement, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -22,16 +22,16 @@ func ParseSQL(statement string) (sqlparser.SelectStatement, error) {
 }
 
 // ValidateQuery applies the selected connection's policy before network access.
-func ValidateQuery(q Query, allowDML bool) error {
-	_, err := parseQuery(q, allowDML)
+func ValidateQuery(q Query, allowDML, allowDDL bool) error {
+	_, err := parseQuery(q, allowDML, allowDDL)
 	return err
 }
 
-func parseQuery(q Query, allowDML bool) (sqlparser.Statement, error) {
+func parseQuery(q Query, allowDML, allowDDL bool) (sqlparser.Statement, error) {
 	if q.Mode != "" && q.Mode != "query" && q.Mode != "explain" && q.Mode != "explain_analyze" {
 		return nil, fmt.Errorf("不支持的执行模式")
 	}
-	node, err := parseStatement(q.SQL, allowDML)
+	node, err := parseStatement(q.SQL, allowDML, allowDDL)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func parseQuery(q Query, allowDML bool) (sqlparser.Statement, error) {
 			return nil, fmt.Errorf("执行计划仅支持 SELECT")
 		}
 		if q.Skip != 0 {
-			return nil, fmt.Errorf("DML 不支持分页")
+			return nil, fmt.Errorf("DML/DDL 不支持分页")
 		}
 	} else if q.Mode != "" && q.Mode != "query" && q.Skip != 0 {
 		return nil, fmt.Errorf("执行计划不支持分页")
@@ -48,18 +48,29 @@ func parseQuery(q Query, allowDML bool) (sqlparser.Statement, error) {
 	return node, nil
 }
 
-// parseStatement rejects multi-statements and reserializes the allowed AST,
-// removing executable comments before either reads or writes can reach the driver.
-func parseStatement(statement string, allowDML bool) (sqlparser.Statement, error) {
-	node, err := sqlparser.Parse(statement)
+// parseStatement validates SELECT/DML for AST reserialization. DDL uses a
+// separate lexical policy and preserves its definition in executeDDL.
+func parseStatement(statement string, allowDML, allowDDL bool) (sqlparser.Statement, error) {
+	_, ddl, err := ddlStatement(statement)
 	if err != nil {
-		return nil, fmt.Errorf("SQL 语法不受支持，请输入单条 SELECT 或已启用的 DML")
+		return nil, err
+	}
+	if ddl && !allowDDL {
+		return nil, fmt.Errorf("当前连接未启用 allow_ddl")
+	}
+	node, err := sqlparser.ParseStrictDDL(statement)
+	if err != nil {
+		return nil, fmt.Errorf("SQL 语法不受支持，请输入单条 SELECT 或已启用的 DML/DDL")
 	}
 	switch node.(type) {
 	case sqlparser.SelectStatement:
+	case *sqlparser.DDL, *sqlparser.DBDDL:
+		if !ddl {
+			return nil, fmt.Errorf("不支持的 DDL")
+		}
 	case *sqlparser.Insert, *sqlparser.Update, *sqlparser.Delete:
 		if !allowDML {
-			return nil, fmt.Errorf("当前连接未启用 allow_dml，仅支持单条 SELECT")
+			return nil, fmt.Errorf("当前连接未启用 allow_dml")
 		}
 	default:
 		return nil, fmt.Errorf("仅支持单条 SELECT 或已启用的 INSERT、REPLACE、UPDATE、DELETE")
@@ -260,9 +271,16 @@ func (c *Client) resultColumns(ctx context.Context, database string, node sqlpar
 }
 func (c *Client) Execute(ctx context.Context, database string, q Query) (Result, error) {
 	out := Result{Rows: [][]any{}, Columns: []Column{}}
-	node, err := parseQuery(q, c.AllowDML)
+	node, err := parseQuery(q, c.AllowDML, c.AllowDDL)
 	if err != nil {
 		return out, err
+	}
+	if isDDL(node) {
+		statement, _, err := ddlStatement(q.SQL)
+		if err != nil {
+			return out, err
+		}
+		return c.executeDDL(ctx, database, statement, node)
 	}
 	// A pooled connection may retain a previous USE database. Require explicit
 	// qualification when no database is selected to prevent querying that stale database.
@@ -317,6 +335,7 @@ func (c *Client) Execute(ctx context.Context, database string, q Query) (Result,
 		}
 		affectedText := strconv.FormatInt(affected, 10)
 		out.AffectedRows = &affectedText
+		out.StatementType = "dml"
 		if _, ok := node.(*sqlparser.Insert); ok {
 			id, err := result.LastInsertId()
 			if err != nil {

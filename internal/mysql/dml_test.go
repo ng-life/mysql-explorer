@@ -19,18 +19,18 @@ func TestDMLPolicy(t *testing.T) {
 		"DELETE FROM sales.orders WHERE id=1",
 		"INSERT INTO sales.orders(id) SELECT id FROM sales.archive",
 	} {
-		if err := ValidateQuery(Query{SQL: statement}, false); err == nil {
+		if err := ValidateQuery(Query{SQL: statement}, false, false); err == nil {
 			t.Fatal("DML accepted by default", statement)
 		}
-		if err := ValidateQuery(Query{SQL: statement}, true); err != nil {
+		if err := ValidateQuery(Query{SQL: statement}, true, false); err != nil {
 			t.Fatal(statement, err)
 		}
 		for _, mode := range []string{"explain", "explain_analyze"} {
-			if err := ValidateQuery(Query{SQL: statement, Mode: mode}, true); err == nil {
+			if err := ValidateQuery(Query{SQL: statement, Mode: mode}, true, false); err == nil {
 				t.Fatal("DML plan accepted", mode, statement)
 			}
 		}
-		if err := ValidateQuery(Query{SQL: statement, Skip: 1}, true); err == nil {
+		if err := ValidateQuery(Query{SQL: statement, Skip: 1}, true, false); err == nil {
 			t.Fatal("DML pagination accepted")
 		}
 	}
@@ -40,7 +40,7 @@ func TestDMLPolicy(t *testing.T) {
 		"UPDATE sales.orders SET id=custom_function()", "INSERT INTO sales.orders(id) VALUES(sleep(10))",
 		"DELETE FROM sales.orders; SELECT 1", "INSERT INTO sales.orders SELECT * FROM sales.archive FOR UPDATE",
 	} {
-		if err := ValidateQuery(Query{SQL: statement}, true); err == nil {
+		if err := ValidateQuery(Query{SQL: statement}, true, false); err == nil {
 			t.Fatal("unsafe statement accepted", statement)
 		}
 	}
@@ -49,7 +49,7 @@ func TestDMLPolicy(t *testing.T) {
 		"UPDATE /* ordinary */ sales.orders SET id=1",
 		"DELETE /* ordinary */ FROM sales.orders",
 	} {
-		node, err := parseQuery(Query{SQL: statement}, true)
+		node, err := parseQuery(Query{SQL: statement}, true, false)
 		if err != nil || strings.Contains(sqlparser.String(node), "ordinary") {
 			t.Fatal("comment retained", err)
 		}

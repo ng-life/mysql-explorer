@@ -58,7 +58,13 @@ func parse(args []string, stderr io.Writer) (options, error) {
 	}
 	fs := flag.NewFlagSet(o.command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, help); fs.PrintDefaults() }
+	fs.Usage = func() {
+		fmt.Fprint(stderr, help)
+		if o.command == "serve" {
+			fmt.Fprintln(stderr, "serve 同时提供 Web 页面和 /mcp（Streamable HTTP），共用 --listen 端口；无需独立 MCP 进程。")
+		}
+		fs.PrintDefaults()
+	}
 	fs.StringVar(&o.config, "config", config.DefaultPath(), "TOML 配置文件")
 	switch o.command {
 	case "serve":
@@ -78,7 +84,7 @@ func parse(args []string, stderr io.Writer) (options, error) {
 		}
 		if o.command == "query" {
 			fs.StringVar(&o.mode, "mode", "query", "执行模式：query、explain、explain_analyze（实际执行 SELECT，需要 MySQL 8.0.18+ 或支持该语法的 TiDB）")
-			fs.StringVar(&o.statement, "sql", "", "单条 SELECT 或配置允许的 DML；计划模式不追加分页")
+			fs.StringVar(&o.statement, "sql", "", "单条 SELECT 或配置允许的 DML/DDL；计划模式不追加分页")
 			fs.StringVar(&o.file, "file", "", "SQL 文件，- 表示标准输入")
 			fs.IntVar(&o.limit, "limit", 100, "每页行数，1–200")
 			fs.IntVar(&o.offset, "offset", 0, "偏移量，0–1000000")
@@ -200,7 +206,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			}
 			o.statement = string(raw)
 		}
-		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, true); err != nil {
+		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, true, true); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
@@ -212,23 +218,29 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if o.command == "connections" {
 		type connection struct {
-			Name     string `json:"name"`
-			Address  string `json:"address"`
-			User     string `json:"user"`
-			Type     string `json:"type"`
-			AllowDML bool   `json:"allow_dml"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Address     string `json:"address"`
+			User        string `json:"user"`
+			Type        string `json:"type"`
+			AllowDML    bool   `json:"allow_dml"`
+			AllowDDL    bool   `json:"allow_ddl"`
 		}
 		out := []connection{}
 		rows := [][]any{}
 		for _, cl := range c.Clusters {
-			out = append(out, connection{cl.Name, cl.Address, cl.User, cl.Type, cl.AllowDML})
+			out = append(out, connection{Name: cl.Name, Description: cl.Description, Address: cl.Address, User: cl.User, Type: cl.Type, AllowDML: cl.AllowDML, AllowDDL: cl.AllowDDL})
 			dml := "关闭"
 			if cl.AllowDML {
 				dml = "开启"
 			}
-			rows = append(rows, []any{cl.Name, cl.Address, cl.User, cl.Type, dml})
+			ddl := "关闭"
+			if cl.AllowDDL {
+				ddl = "开启"
+			}
+			rows = append(rows, []any{cl.Name, cl.Address, cl.User, cl.Type, dml, ddl, cl.Description})
 		}
-		return output(o.format, stdout, stderr, out, []string{"名称", "地址", "用户", "类型", "允许 DML"}, rows)
+		return output(o.format, stdout, stderr, out, []string{"名称", "地址", "用户", "类型", "允许 DML", "允许 DDL", "用途说明"}, rows)
 	}
 	id, err := selectConnection(c, o.connection)
 	if err != nil {
@@ -236,12 +248,12 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 2
 	}
 	if o.command == "query" {
-		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, c.Clusters[id].AllowDML); err != nil {
+		if err := mysql.ValidateQuery(mysql.Query{SQL: o.statement, Mode: o.mode, Skip: o.offset}, c.Clusters[id].AllowDML, c.Clusters[id].AllowDDL); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 2
 		}
 		if _, err := mysql.ParseSQL(o.statement); err != nil && o.pagination {
-			fmt.Fprintln(stderr, "DML 不支持 --limit 或 --offset，请在 SQL 中指定范围")
+			fmt.Fprintln(stderr, "DML/DDL 不支持 --limit 或 --offset，请在 SQL 中指定范围")
 			return 2
 		}
 	}
@@ -338,7 +350,7 @@ func executeQuery(ctx context.Context, reader mysql.Reader, o options, stdout, s
 			message = "执行计划分析失败，请检查 SQL、权限和超时；请确认数据库支持当前执行计划语法"
 		}
 		if _, parseErr := mysql.ParseSQL(o.statement); parseErr != nil {
-			message = "DML 执行或提交失败，结果可能未确定；请先核对数据库状态，不要直接重试"
+			message = "DML/DDL 执行失败，结果可能未确定；请先核对数据库状态，不要直接重试"
 		}
 		fmt.Fprintln(stderr, message)
 		return 1
@@ -349,6 +361,10 @@ func executeQuery(ctx context.Context, reader mysql.Reader, o options, stdout, s
 		}
 		headers := []string{"影响行数"}
 		row := []any{*result.AffectedRows}
+		if result.StatementType == "ddl" {
+			headers = append(headers, "DDL 状态")
+			row = append(row, "已执行；请刷新元数据")
+		}
 		if result.LastInsertID != nil {
 			headers = append(headers, "自增 ID")
 			row = append(row, *result.LastInsertID)

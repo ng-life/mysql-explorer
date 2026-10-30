@@ -263,6 +263,7 @@ user='reader'
 password='private-fixture'
 [[clusters]]
 name='explicit-tidb'
+description='订单分析专用'
 address='127.0.0.1:1'
 user='writer'
 type='tidb'
@@ -279,24 +280,103 @@ allow_dml=true
 		}
 		if format == "json" {
 			var rows []struct {
-				Type     string `json:"type"`
-				AllowDML bool   `json:"allow_dml"`
+				Type        string `json:"type"`
+				Description string `json:"description"`
+				AllowDML    bool   `json:"allow_dml"`
 			}
 			if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 				t.Fatal(err)
 			}
-			if len(rows) != 2 || rows[0].Type != "mysql" || rows[0].AllowDML || rows[1].Type != "tidb" || !rows[1].AllowDML {
+			if len(rows) != 2 || rows[0].Type != "mysql" || rows[0].AllowDML || rows[1].Type != "tidb" || !rows[1].AllowDML || rows[0].Description != "" || rows[1].Description != "订单分析专用" {
 				t.Fatal(out.String())
 			}
 			if !strings.Contains(out.String(), `"allow_dml": false`) {
 				t.Fatal("default false must be explicit", out.String())
 			}
 		} else {
-			for _, want := range []string{"类型", "允许 DML", "mysql", "tidb", "开启", "关闭"} {
+			for _, want := range []string{"类型", "允许 DML", "mysql", "tidb", "开启", "关闭", "用途说明", "订单分析专用"} {
 				if !strings.Contains(out.String(), want) {
 					t.Fatal("missing", want, out.String())
 				}
 			}
 		}
+	}
+}
+
+func TestCLIDDLPolicyAndConnections(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		body := fmt.Sprintf(`[[clusters]]
+name='offline'
+address='127.0.0.1:1'
+user='reader'
+allow_ddl=%t
+`, enabled)
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		var out, errs bytes.Buffer
+		args := []string{"query", "--config", path, "--schema", "sales", "--sql", "ALTER TABLE t ADD id int"}
+		if enabled {
+			args = append(args, "--limit", "20")
+		}
+		if code := Run(context.Background(), args, strings.NewReader(""), &out, &errs); code != 2 || out.Len() != 0 {
+			t.Fatal(code, errs.String())
+		}
+		want := "allow_ddl"
+		if enabled {
+			want = "不支持 --limit"
+		}
+		if !strings.Contains(errs.String(), want) {
+			t.Fatal(errs.String())
+		}
+		for _, format := range []string{"table", "json"} {
+			out.Reset()
+			errs.Reset()
+			if code := Run(context.Background(), []string{"connections", "--config", path, "--format", format}, strings.NewReader(""), &out, &errs); code != 0 {
+				t.Fatal(code, errs.String())
+			}
+			if format == "json" {
+				var rows []struct {
+					AllowDDL bool `json:"allow_ddl"`
+				}
+				if err := json.Unmarshal(out.Bytes(), &rows); err != nil || len(rows) != 1 || rows[0].AllowDDL != enabled {
+					t.Fatal(out.String(), err)
+				}
+			} else if !strings.Contains(out.String(), "允许 DDL") {
+				t.Fatal(out.String())
+			}
+		}
+	}
+}
+
+type ddlResultReader struct{ mysql.Reader }
+
+func (ddlResultReader) Execute(context.Context, string, mysql.Query) (mysql.Result, error) {
+	n := "0"
+	return mysql.Result{Rows: [][]any{}, Columns: []mysql.Column{}, AffectedRows: &n, StatementType: "ddl"}, nil
+}
+func TestCLIDDLResult(t *testing.T) {
+	for _, format := range []string{"json", "table"} {
+		var out, errs bytes.Buffer
+		if code := executeQuery(context.Background(), ddlResultReader{}, options{format: format, statement: "CREATE DATABASE example"}, &out, &errs); code != 0 {
+			t.Fatal(code, errs.String())
+		}
+		if format == "json" {
+			var r mysql.Result
+			if err := json.Unmarshal(out.Bytes(), &r); err != nil || r.StatementType != "ddl" {
+				t.Fatal(out.String(), err)
+			}
+		} else if !strings.Contains(out.String(), "刷新元数据") {
+			t.Fatal(out.String())
+		}
+	}
+}
+
+func TestServeHelpMentionsMCP(t *testing.T) {
+	var out, errs bytes.Buffer
+	code := Run(context.Background(), []string{"serve", "--help"}, strings.NewReader(""), &out, &errs)
+	if code != 0 || !strings.Contains(errs.String(), "Streamable HTTP") || !strings.Contains(errs.String(), "/mcp") {
+		t.Fatal(code, errs.String())
 	}
 }

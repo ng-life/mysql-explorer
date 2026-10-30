@@ -8,6 +8,7 @@
       rel="icon"
       href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%231677ff%22/%3E%3Ctext%20x%3D%2216%22%20y%3D%2222%22%20font-family%3D%22sans-serif%22%20font-size%3D%2222%22%20text-anchor%3D%22middle%22%20fill%3D%22white%22%3EM%3C/text%3E%3C/svg%3E"
     />
+    <link rel="stylesheet" href="/assets/result-grid.css" />
     <style>
       :root {
         font-family:
@@ -307,6 +308,17 @@
         background: #fef3f2;
         border-color: #fecdca;
       }
+      .mcp-fab { position: fixed; right: calc(20px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 40; width: 48px; height: 48px; display: grid; place-items: center; border: 1px solid #d1e0ff; border-radius: 50%; color: #175cd3; background: white; box-shadow: 0 4px 16px #10182826; }
+      .mcp-fab:hover { color: white; background: #1677ff; border-color: #1677ff; }
+      .mcp-panel { margin: auto; width: min(780px, calc(100vw - 32px)); max-height: 85dvh; overflow: auto; padding: 20px; font-size: 12px; color: #475467; }
+      .mcp-panel::backdrop { background: #10182866; }
+      .mcp-dialog-head { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+      .mcp-dialog-head h2 { margin: 0; font-size: 15px; line-height: 1.6; }
+      .mcp-panel p { line-height: 1.8; overflow-wrap: anywhere; }
+      .mcp-connection { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+      .mcp-input { flex: 1 1 200px; min-width: 0; padding: 8px; border: 1px solid #d0d5dd; border-radius: 7px; font: 12px ui-monospace, monospace; }
+      .mcp-config { padding: 12px; background: #f9fafb; border: 1px solid #eaecf0; border-radius: 7px; overflow: auto; font: 12px/1.7 ui-monospace, monospace; }
+      .mcp-tools { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
       .query-panel {
         padding: 18px;
         margin-bottom: 18px;
@@ -523,65 +535,13 @@
           flex-wrap: wrap;
         }
       }
-      .table-scroll {
-        overflow: auto;
-        max-height: calc(100dvh - 440px);
-        min-height: 240px;
-      }
-      .result-table {
-        border-collapse: separate;
-        border-spacing: 0;
-        width: 100%;
-        font-size: 12px;
-      }
-      .result-table th {
-        position: sticky;
-        top: 0;
-        background: #f9fafb;
-        z-index: 1;
-        text-align: left;
-        border-bottom: 1px solid #d0d5dd;
-        padding: 12px 16px;
-        white-space: nowrap;
-        color: #475467;
-      }
-      .result-table td {
-        border-bottom: 1px solid #f2f4f7;
-        padding: 10px 16px;
-        max-width: 420px;
-        min-width: 110px;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        vertical-align: top;
-        font:
-          12px/1.6 ui-monospace,
-          monospace;
-      }
-      .result-table tr:hover td {
-        background: #f9fbff;
-      }
-      .column-name {
-        display: block;
-        font-size: 10px;
-        font-weight: 400;
-        color: #98a2b3;
-        margin-top: 4px;
-      }
+      .table-scroll { min-height: 240px; }
       .cell-null {
         color: #98a2b3;
         font-style: italic;
       }
       .results {
         overflow: hidden;
-      }
-      .row-index {
-        color: #98a2b3;
-        min-width: 45px !important;
-      }
-      @media (max-width: 680px) {
-        .table-scroll {
-          max-height: 65dvh;
-        }
       }
     </style>
   </head>
@@ -675,7 +635,27 @@
         </div>
       </main>
     </div>
+    <button id="openMCPHelp" type="button" class="mcp-fab" aria-label="MCP 接入配置" aria-haspopup="dialog" title="MCP 接入配置">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 3v4m6-4v4M7 7h10v3a5 5 0 0 1-10 0V7Zm5 8v3a3 3 0 0 0 3 3h3" />
+      </svg>
+    </button>
+    <dialog id="mcpHelp" class="panel mcp-panel" aria-labelledby="mcpHelpTitle">
+      <div class="mcp-dialog-head"><h2 id="mcpHelpTitle">MCP 接入配置 · Streamable HTTP</h2><button id="closeMCPHelp" type="button" class="button">关闭</button></div>
+      <p>在 MCP 客户端选择「Streamable HTTP」，填写下面的服务地址。MCP 随 serve 一同启动，与网页共用端口，无需独立进程；不使用旧版 /sse 地址。</p>
+      <div class="mcp-connection">
+        <input id="mcpURL" class="mcp-input" aria-label="MCP 服务地址" readonly />
+        <button id="copyMCPURL" type="button" class="button">复制 MCP 地址</button>
+        <button id="copyMCPConfig" type="button" class="button">复制配置示例</button>
+        <span id="mcpCopyStatus" role="status"></span>
+      </div>
+      <pre id="mcpConfig" class="mcp-config"></pre>
+      <p>上方为常见 mcpServers 格式示例，配置字段以客户端要求为准。远程访问时使用服务器地址，并确保 listen 绑定到可达地址；本机地址 127.0.0.1 只适用于同一台电脑。</p>
+      <p>可用工具：<span class="mcp-tools">list_connections、list_schemas、list_tables、describe_table、execute_sql、get_metadata、refresh_metadata</span>。execute_sql 的 mode 支持 query、explain、explain_analyze。</p>
+      <p>三端共用连接权限：type 决定数据库兼容模式，allow_dml、allow_ddl 控制写入。EXPLAIN ANALYZE 会实际执行 SELECT；写入失败后先核对状态，不要自动重试。服务无内置登录，远程接入应配置认证代理或网络访问控制。</p>
+    </dialog>
     <script src="/assets/editor.js"></script>
+    <script src="/assets/result-grid.js"></script>
     <script>
       const $ = (id) => document.getElementById(id),
         esc = (s) =>
@@ -698,6 +678,7 @@
         dbStates = new Map(),
         database = "",
         table = "",
+        resultGrid = null,
         rows = [],
         columns = [],
         epoch = 0,
@@ -726,7 +707,12 @@
         for (const id of ["limit", "formatSQL", "resetQuery", "runQuery", "explain", "explainAnalyze"])
           $(id).disabled = !enabled;
       }
+      function destroyResultGrid() {
+        if (resultGrid) resultGrid.destroy();
+        resultGrid = null;
+      }
       function clearResults(message = "选择表，或输入 SQL 执行查询") {
+        destroyResultGrid();
         $("resultTitle").textContent = "查询结果";
         rows = [];
         columns = [];
@@ -745,7 +731,7 @@
             ? clusters
                 .map(
                   (c, i) =>
-                    `<button class="cluster" data-id="${i}"><span class="cluster-icon">◈</span><span class="cluster-text"><div class="cluster-name">${esc(c.name)}</div><div class="cluster-host">${esc(c.address)}</div><div class="cluster-tags"><span class="cluster-tag" title="type = ${c.type === "tidb" ? "tidb" : "mysql"}">${c.type === "tidb" ? "TiDB" : "MySQL"}</span><span class="cluster-tag ${c.allow_dml === true ? "writable" : ""}" title="allow_dml = ${c.allow_dml === true}">DML ${c.allow_dml === true ? "开启" : "关闭"}</span></div></span></button>`,
+                    `<button class="cluster" data-id="${i}"><span class="cluster-icon">◈</span><span class="cluster-text"><div class="cluster-name">${esc(c.name)}</div><div class="cluster-host">${esc(c.address)}</div><div class="cluster-tags"><span class="cluster-tag" title="type = ${c.type === "tidb" ? "tidb" : "mysql"}">${c.type === "tidb" ? "TiDB" : "MySQL"}</span><span class="cluster-tag ${c.allow_dml === true ? "writable" : ""}" title="allow_dml = ${c.allow_dml === true}">DML ${c.allow_dml === true ? "开启" : "关闭"}</span><span class="cluster-tag ${c.allow_ddl === true ? "writable" : ""}" title="allow_ddl = ${c.allow_ddl === true}">DDL ${c.allow_ddl === true ? "开启" : "关闭"}</span></div></span></button>`,
                 )
                 .join("")
             : '<div class="tree-state">未配置服务，请在 config.toml 中添加连接。</div>';
@@ -769,14 +755,19 @@
         schema = Object.create(null);
         updateCompletion();
         lastQuery = null;
-        const writable = clusters[id].allow_dml === true;
-        $("accessMode").textContent = writable ? "允许 DML" : "只读浏览";
-        $("footerMode").textContent = writable ? "允许 DML · 按需加载" : "只读查询 · 按需加载";
-        $("sqlLabel").textContent = writable ? "SQL · SELECT / INSERT / REPLACE / UPDATE / DELETE" : "SQL · SELECT";
+        const dml = clusters[id].allow_dml === true;
+        const ddl = clusters[id].allow_ddl === true;
+        const writable = dml || ddl;
+        const permissions = [dml ? "DML" : "", ddl ? "DDL" : ""].filter(Boolean).join(" / ");
+        $("accessMode").textContent = writable ? "允许 " + permissions : "只读浏览";
+        $("footerMode").textContent = writable ? "允许 " + permissions + " · 按需加载" : "只读查询 · 按需加载";
+        $("sqlLabel").textContent = "SQL · SELECT" + (dml ? " / DML" : "") + (ddl ? " / DDL" : "");
         $("runQuery").textContent = writable ? "执行 SQL" : "执行查询";
-        $("accessHint").textContent = writable
-          ? "当前连接已启用 DML：执行成功即提交。每页条数不限制写入范围，失败或超时后请核对数据库状态，不要直接重试。"
-          : clusters[id].type === "tidb" ? "TiDB 只读模式：通过 SQL 校验限制查询，数据库账号权限作为只读保障。" : "";
+        $("accessHint").textContent = [
+          dml ? "当前连接已启用 DML：执行成功即提交，每页条数不限制写入范围。" : "",
+          ddl ? "当前连接已启用 DDL：结构变更可能隐式提交，无法保证回滚；完成后请刷新元数据。" : "",
+          writable ? "失败或超时后请核对数据库状态，不要直接重试。" : clusters[id].type === "tidb" ? "TiDB 只读模式：通过 SQL 校验限制查询，数据库账号权限作为只读保障。" : "",
+        ].filter(Boolean).join(" ");
         enableQuery(true);
         clearResults();
         showError("");
@@ -1008,12 +999,13 @@
           columns = out.columns || [];
           hasMore = out.has_more;
           if (out.affected_rows !== undefined) {
-            $("resultTitle").textContent = "DML 执行结果";
-            $("resultCount").textContent = "已提交";
+            const ddl = out.statement_type === "ddl";
+            $("resultTitle").textContent = ddl ? "DDL 执行结果" : "DML 执行结果";
+            $("resultCount").textContent = ddl ? "已执行" : "已提交";
             $("results").innerHTML = '<div class="empty"></div>';
             $("results").firstChild.textContent = "影响行数：" + out.affected_rows +
               (out.last_insert_id !== undefined ? " · 自增 ID：" + out.last_insert_id : "");
-            $("pageInfo").textContent = "DML 不分页";
+            $("pageInfo").textContent = ddl ? "DDL 已执行，请刷新元数据" : "DML 不分页";
             $("prevPage").disabled = true;
             $("nextPage").disabled = true;
           } else {
@@ -1046,25 +1038,8 @@
         }
         $("resultCount").textContent =
           `${plan ? "计划" : "本页"} ${rows.length} 条 · ${columns.length} 列${hasMore ? " · 后续还有数据" : ""}`;
-        const head = columns
-          .map((c) => {
-            const characters = Array.from(c.comment || "");
-            const label =
-              characters.length > 4
-                ? characters.slice(0, 4).join("") + "..."
-                : c.comment || c.name;
-            const tooltip = c.comment || c.name + " · " + c.type;
-            return `<th title="${esc(tooltip)}">${esc(label)}${c.comment ? `<span class="column-name">${esc(c.name)}</span>` : ""}</th>`;
-          })
-          .join("");
-        const body = rows
-          .map(
-            (row, i) =>
-              `<tr><td class="row-index">${lastQuery.skip + i + 1}</td>${row.map((value) => (value === null ? '<td class="cell-null">NULL</td>' : `<td>${esc(typeof value === "object" ? JSON.stringify(value) : value)}</td>`)).join("")}</tr>`,
-          )
-          .join("");
-        $("results").innerHTML =
-          `<table class="result-table"><thead><tr><th>#</th>${head}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length + 1}"><div class="empty">没有匹配的数据</div></td></tr>`}</tbody></table>`;
+        destroyResultGrid();
+        resultGrid = window.createResultGrid($("results"), columns, rows, lastQuery.skip);
         $("pageInfo").textContent = plan ? "分析原 SQL · 未追加分页" : rows.length
           ? `第 ${lastQuery.skip + 1}–${lastQuery.skip + rows.length} 条`
           : "本页没有数据";
@@ -1109,6 +1084,28 @@
         showError("");
         loadDatabases(true);
       };
+      $("openMCPHelp").onclick = () => $("mcpHelp").showModal();
+      $("closeMCPHelp").onclick = () => $("mcpHelp").close();
+      const mcpURL = new URL("/mcp", window.location.origin).href;
+      $("mcpURL").value = mcpURL;
+      $("mcpConfig").textContent = JSON.stringify({mcpServers: {"mysql-explorer": {type: "http", url: mcpURL}}}, null, 2);
+      async function copyMCP(text) {
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const input = document.createElement("textarea");
+            input.value = text;
+            input.style.cssText = "position:fixed;left:-9999px;top:0";
+            $("mcpHelp").append(input);
+            try { input.select(); if (!document.execCommand("copy")) throw Error("copy failed"); }
+            finally { input.remove(); }
+          }
+          $("mcpCopyStatus").textContent = "已复制";
+        } catch { $("mcpCopyStatus").textContent = "复制失败，请手动选择内容复制"; }
+      }
+      $("copyMCPURL").onclick = () => copyMCP(mcpURL);
+      $("copyMCPConfig").onclick = () => copyMCP($("mcpConfig").textContent);
       init();
     </script>
   </body>

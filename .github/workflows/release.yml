@@ -40,7 +40,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-          git diff --exit-code -- internal/web/assets/editor.js internal/web/assets/editor.js.LEGAL.txt
+          git diff --exit-code -- internal/web/assets/
 
       - name: Set up Go
         uses: actions/setup-go@v5

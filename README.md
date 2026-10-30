@@ -9,7 +9,7 @@
 - 选中表时填入 `SELECT * FROM db_name.table_name`，支持编辑 SQL、分页和快捷键执行。
 - 查询结果使用动态列，优先显示来源字段备注，无备注则显示结果字段名。
 - 支持普通 SELECT、WHERE、ORDER BY、聚合及 JOIN；表别名和字段别名按 SQL 投影位置映射。
-- 默认仅支持单条 SELECT；连接可显式启用 TiDB 兼容和 DML。始终拒绝 DDL、锁定 SELECT、文件导出和未知存储函数。
+- 默认仅支持单条 SELECT；连接可显式启用 TiDB 兼容和 DML。默认拒绝 DDL，始终拒绝锁定 SELECT、文件导出和未知存储函数。
 
 ## 运行
 
@@ -35,24 +35,67 @@ password_env = "MYSQL_EXPLORER_PASSWORD"
 
 可增加多个 `[[clusters]]`。支持 `password` 或 `password_env`，后者覆盖前者。配置文件已加入 Git 忽略规则；浏览器只接收服务名称、主机端口和连接能力配置，错误响应不包含驱动原始错误或凭据。应用无内置登录，远程访问应由现有网络访问控制或认证代理保护；只读连接应使用数据库只读账号，写入连接按需授予最小 DML 权限。
 
-## 连接类型与 DML
+## Streamable HTTP MCP
 
-每个 `[[clusters]]` 独立配置，Web 和 CLI 使用同一策略。Web 的 SERVICES 列表显示每个连接的 MySQL / TiDB 类型与 DML 开启、关闭标签；CLI 的 `connections` 表格显示「类型」「允许 DML」，JSON 输出包含 `type` 字符串和 `allow_dml` 布尔字段。修改配置后需重启 Web 服务；CLI 下次运行读取新配置。
+无子命令启动或执行 `mysql-explorer serve` 时，在同一监听地址提供网页和 MCP：
+
+- Web：`http://127.0.0.1:18084/`
+- MCP：`http://127.0.0.1:18084/mcp`
+- 传输选择 **Streamable HTTP**，不是旧版 HTTP+SSE 的 `/sse`。无需运行独立 MCP 进程。
+
+启动日志输出实际 Web/MCP 地址、客户端接入示例和 CLI 用法。网页右下角固定图标打开「MCP 接入配置」弹窗，提供可复制的地址及常见配置示例，按当前网页地址生成 URL。不同客户端的配置键可能不同，以下以支持 `mcpServers`、`type: http`、`url` 的格式为例：
+
+```json
+{
+  "mcpServers": {
+    "mysql-explorer": {
+      "type": "http",
+      "url": "http://127.0.0.1:18084/mcp"
+    }
+  }
+}
+```
+
+远程客户端需将主机改为服务器地址，并确保 `listen` 绑定到所需的可达地址。服务无内置登录，不应直接暴露公网；使用认证代理或网络访问控制。反向代理需转发 `/mcp` 的请求与 MCP 协议头；MCP 校验 Origin，默认回环监听同时校验 Host。无 Origin 的原生 MCP 客户端可以连接；不启用跨站 CORS。
+
+| MCP 工具 | 对应功能与参数 |
+| --- | --- |
+| `list_connections` | CLI `connections`；不连接数据库，返回名称、description 用途说明、地址、type、allow_dml、allow_ddl |
+| `list_schemas` | CLI `schemas`；参数 `connection` |
+| `list_tables` | CLI `tables`；参数 `connection`、`schema`，返回名称、类型和备注 |
+| `describe_table` | CLI `describe`；参数 `connection`、`schema`、`table`、`mode`（fields / indexes / ddl） |
+| `execute_sql` | CLI `query`；参数 `connection`、`schema`、`sql`、`mode`（query / explain / explain_analyze）、`limit`、`skip` |
+| `get_metadata` | 网页已加载的数据库/表/字段备注缓存；参数 `connection` |
+| `refresh_metadata` | 网页刷新完整元数据；参数 `connection`，超时 45 秒 |
+
+连接名称需要精确匹配；只有一个连接时可省略 `connection`。多个连接时不自动选择第一个。`execute_sql` 不通过 HTTP 回环调用，直接使用 HTTP API 共用的校验/执行层及同一连接池。SELECT 默认每页 20 行，最多 200 行，偏移量上限 1000000；SQL 执行超时 12 秒，返回行内容上限 32 MiB。MCP HTTP 请求体上限 1 MiB，包含 JSON-RPC 包装。
+
+MCP 沿用 type、allow_dml、allow_ddl、AST 校验和数据库权限，不允许工具参数临时开启写权限。执行计划不追加分页，DML/DDL 不支持分页，EXPLAIN ANALYZE 实际执行 SELECT。写入可能提交，DDL 可能隐式提交；失败或超时不得自动重试，应先核对状态。结果保留有序 `columns` 和二维 `rows`，大整数与 DECIMAL 保留字符串。
+
+MCP 使用官方 Go SDK v1.3.1，保持 Go 1.23 兼容。采用无状态 Streamable HTTP，POST 返回 JSON，不维护跨请求会话，不提供旧版 SSE 入口或 GET 事件流；直接用浏览器打开 `/mcp` 不等于 MCP 客户端握手。
+
+## 连接类型与写入权限
+
+每个 `[[clusters]]` 独立配置，Web 和 CLI 使用同一策略。Web 的 SERVICES 列表显示每个连接的 MySQL / TiDB 类型与 DML、DDL 开启/关闭标签；CLI 的 `connections` 表格显示「类型」「允许 DML」「允许 DDL」，JSON 输出包含 `type` 字符串和 `allow_dml`、`allow_ddl` 布尔字段。修改配置后需重启 Web 服务；CLI 下次运行读取新配置。
 
 ```toml
 [[clusters]]
 name = "TiDB 示例"
+description = "订单分析数据库，用于订单查询和执行计划分析"
 type = "tidb"
 address = "127.0.0.1:4000"
 user = "readonly"
 password_env = "TIDB_EXPLORER_PASSWORD"
 allow_dml = false
+allow_ddl = false
 ```
 
 | 配置项 | 默认值 | 行为 |
 | --- | --- | --- |
+| `description` | `""` | 连接用途说明；CLI connections 表格/JSON 和 MCP list_connections 返回，网页不展示，也不通过网页连接 API 返回 |
 | `type` | `"mysql"` | 仅接受 `"mysql"`、`"tidb"`；不根据端口、版本自动切换 |
 | `allow_dml` | `false` | 启用后允许单条 INSERT、REPLACE、UPDATE、DELETE；适用于两种数据库类型 |
+| `allow_ddl` | `false` | 独立允许表、索引和数据库 DDL，不会启用 DML |
 
 MySQL 的 SELECT 和执行计划继续使用只读事务。TiDB 未实现同等的 READ ONLY 事务保护；显式指定 `type = "tidb"` 后，SELECT 和执行计划使用普通事务，读取结束后回滚，仍执行 AST 校验和函数白名单。TiDB 的只读保障需要数据库账号权限配合；程序不修改 `tidb_enable_noop_functions`，也不会因 MySQL 只读事务失败自动降级。
 
@@ -67,6 +110,14 @@ mysql-explorer query --connection 写入环境 --schema sales \
 ```
 
 应用不自动重试 DML。超时、断连或提交失败后，实际提交结果可能不明确，应先核对数据库状态；非事务表或触发器等数据库行为也可能影响回滚边界。启用 DML 前应配置访问控制，并限制数据库账号的写入权限。
+
+### DDL 开关
+
+在需要结构变更的连接中设置 `allow_ddl = true`。Web 使用「执行 SQL」，CLI 使用 `query --sql` 或 `--file`；不支持分页和 EXPLAIN。可执行当前解析器支持的 CREATE TABLE / INDEX / DATABASE（SCHEMA）、ALTER TABLE、DROP TABLE / INDEX / DATABASE、TRUNCATE 和 RENAME TABLE。表和索引 DDL 必须选择数据库，CLI 使用 `--schema`，即使 SQL 中的表名已带库名。
+
+DDL 使用完整原始定义执行，避免旧解析器重新生成 SQL 时丢失 ALTER 子句或索引定义。程序会检查开关、支持的语句类别和单语句边界；数据库负责最终语法和权限校验。DDL 不接受 SQL 注释、CREATE SELECT、临时表、视图、存储过程、函数、触发器和事件；SELECT/DML 仍沿用 AST 重写、注释清除和函数白名单。
+
+DDL 可能隐式提交，不能保证回滚。程序不为 DDL 包装事务，不自动重试；失败、断连或超时后应先核对结构状态。执行结果的 `statement_type` 为 `ddl`，DML 为 `dml`，查询结果不包含该字段。DDL 成功后点击刷新元数据，更新库、表和字段列表。Web 和 CLI `connections` 均展示 DDL 开关；配置开关不替代数据库权限。
 
 ## 查询
 
@@ -102,15 +153,23 @@ SELECT 使用 AST 校验；配置启用 DML 后，DML 也经过同一函数白�
 - 沿用 SELECT AST 校验、函数白名单、注释清除、按连接类型选择的事务、12 秒请求超时和 32 MiB 返回内容限制。执行计划不分页，返回完整计划。
 - Web API：`POST /api/clusters/{id}/rows/query` 支持 `mode` 为 `query`（默认）、`explain` 或 `explain_analyze`；SQL 字段仍传入 SELECT，计划模式的 `skip` 必须为 0。响应沿用 `columns`、`rows`、`has_more`，计划的 `has_more` 为 false。
 
-## 编辑器开发
+## 结果表格
 
-修改 `frontend/editor.js` 后使用 Node.js 24 和 pnpm 重新构建：
+查询结果、EXPLAIN 和 TiDB EXPLAIN ANALYZE 使用 Tabulator；MySQL 的单列 ANALYZE 计划仍使用文本树。宽表在表格顶部提供可见的横向滚动控件，并与表格滚动位置同步。表格支持拖动列边界调整宽度、拖动表头换序、「显示列」切换列、框选单元格后复制。双击单元格、选中后按 Enter 或点击「查看单元格」，可查看并复制长文本全文。
+
+表格仅浏览数据，不提供单元格编辑或粘贴写入；SQL 写入仍通过连接的 DML/DDL 配置和执行入口。分页继续由后端控制，不自动加载全部数据；当前不启用表头排序和本地过滤，完整结果排序、筛选应写入 SQL。复制仅包含当前页选区，无表头；NULL 显示为 NULL，空字符串显示为双引号，大整数和 DECIMAL 保留字符串，同名列按位置独立展示。
+
+Tabulator JS/CSS 和 MIT 许可证均打包嵌入二进制，无需 CDN。许可证可从 `/assets/result-grid.LICENSE.txt` 查看。
+
+## 前端开发
+
+修改 `frontend/editor.js`、`frontend/result-grid.js`、`frontend/result-grid.css` 或前端依赖后，使用 Node.js 24 和 pnpm 重新构建：
 
 ```sh
 make web
 ```
 
-编辑器源代码、依赖锁文件和生成的 bundle 都提交到仓库。发布 CI 会重建并检查 bundle 一致性；浏览器无需访问外部 CDN。
+前端源代码、依赖锁文件和生成的 JS/CSS、许可证都提交到仓库。发布 CI 会重建并检查静态产物一致性；浏览器无需访问外部 CDN。
 
 启动预加载通过 SHOW DATABASES 和两次 information_schema 批量查询完成，不扫描表数据。每个服务超时 45 秒，全部启动尝试结束后开放 HTTP；失败服务显示未加载状态，其他服务正常可用。补全直接使用全部预加载元数据，无需先展开表。
 

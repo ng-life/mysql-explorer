@@ -25,7 +25,7 @@ func Run(ctx context.Context, c config.Config) error {
 	server := &http.Server{Handler: New(c, pool).Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
-	log.Printf("MySQL Explorer is ready at %s", listener.Addr())
+	log.Print(startupInstructions(listener.Addr().String()))
 	select {
 	case err := <-done:
 		if err != http.ErrServerClosed {

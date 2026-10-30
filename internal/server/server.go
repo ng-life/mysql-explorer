@@ -34,6 +34,7 @@ func respond(w http.ResponseWriter, v any) {
 // Handler returns the browser and API routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("GET /assets/", http.FileServerFS(web.Assets))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -45,10 +46,11 @@ func (s *Server) Handler() http.Handler {
 			Address  string `json:"address"`
 			Type     string `json:"type"`
 			AllowDML bool   `json:"allow_dml"`
+			AllowDDL bool   `json:"allow_ddl"`
 		}
 		out := []publicCluster{}
 		for _, cl := range s.config.Clusters {
-			out = append(out, publicCluster{cl.Name, cl.Address, cl.Type, cl.AllowDML})
+			out = append(out, publicCluster{cl.Name, cl.Address, cl.Type, cl.AllowDML, cl.AllowDDL})
 		}
 		respond(w, out)
 	})
@@ -136,53 +138,18 @@ func (s *Server) rows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请求只能包含一个 JSON 对象", 400)
 		return
 	}
-	if in.Database != "" && !validName(in.Database) {
-		http.Error(w, "数据库名称无效", 400)
-		return
-	}
-	if in.Mode != "" && in.Mode != "query" && in.Mode != "explain" && in.Mode != "explain_analyze" {
-		http.Error(w, "不支持的执行模式", 400)
-		return
-	}
-	if in.Mode != "" && in.Mode != "query" && in.Skip != 0 {
-		http.Error(w, "执行计划不支持分页", 400)
-		return
-	}
-	if in.Limit == 0 {
-		in.Limit = 20
-	}
-	if in.Limit < 1 || in.Limit > 200 || in.Skip < 0 || in.Skip > 1000000 {
-		http.Error(w, "每页 1–200 条，偏移量 0–1000000", 400)
-		return
-	}
 	id, err := strconv.Atoi(r.PathValue("id"))
-	if err != nil || id < 0 || id >= len(s.config.Clusters) {
+	if err != nil {
 		http.Error(w, "未知的 MySQL 服务", 404)
 		return
 	}
-	q := mysql.Query{Mode: in.Mode, SQL: in.SQL, Limit: in.Limit, Skip: in.Skip}
-	if err := mysql.ValidateQuery(q, s.config.Clusters[id].AllowDML); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	r, cancel := bounded(r)
-	defer cancel()
-	client, ok := s.reader(w, r)
-	if !ok {
-		return
-	}
-	out, err := client.Execute(r.Context(), in.Database, q)
+	out, err := s.runQuery(r.Context(), id, in)
 	if err != nil {
-		message := "查询失败，请检查 SQL、数据库和权限；结果过大时减少每页条数"
-		if in.Mode == "explain" || in.Mode == "explain_analyze" {
-			message = "执行计划分析失败，请检查 SQL、权限和超时；请确认数据库支持当前执行计划语法"
-		}
-		if _, parseErr := mysql.ParseSQL(in.SQL); parseErr != nil {
-			message = "DML 执行或提交失败，结果可能未确定；请先核对数据库状态，不要直接重试"
-		}
-		http.Error(w, message, 502)
+		e := err.(*queryError)
+		http.Error(w, e.message, e.status)
 		return
 	}
+
 	respond(w, out)
 }
 

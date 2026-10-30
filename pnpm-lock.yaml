@@ -187,6 +187,9 @@ importers:
       sql-formatter:
         specifier: ^15.9.0
         version: 15.9.0
+      tabulator-tables:
+        specifier: 6.7.1
+        version: 6.7.1
     devDependencies:
       esbuild:
         specifier: ^0.25.0
@@ -425,6 +428,9 @@ packages:
   style-mod@4.1.4:
     resolution: {integrity: sha512-XXWIQt633/EpAFx8aZDOTjBzrCaGmhvEQlQo6MVPfa2OzO2cWo+4hV9h+6UkHYlXGfy+ODXKUdP7Pthmcu5ATw==}
 
+  tabulator-tables@6.7.1:
+    resolution: {integrity: sha512-6CMy17XdemQaIdg1BOqD5K6nzF2xoD47eRNiBYJBK+QrLWji7sgukyPjKXYrjRdWLwbGENdUsiAYJrNS3XeUfw==}
+
   w3c-keyname@2.2.8:
     resolution: {integrity: sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ==}
 
@@ -627,5 +633,7 @@ snapshots:
       nearley: 2.20.1
 
   style-mod@4.1.4: {}
+
+  tabulator-tables@6.7.1: {}
 
   w3c-keyname@2.2.8: {}

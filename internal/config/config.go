@@ -15,7 +15,9 @@ import (
 type Cluster struct {
 	Type        string `toml:"type"`
 	AllowDML    bool   `toml:"allow_dml"`
+	AllowDDL    bool   `toml:"allow_ddl"`
 	Name        string `toml:"name"`
+	Description string `toml:"description"`
 	Address     string `toml:"address"`
 	User        string `toml:"user"`
 	Password    string `toml:"password"`

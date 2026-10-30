@@ -2,6 +2,7 @@ listen = "127.0.0.1:18084"
 
 [[clusters]]
 name = "本地 MySQL"
+description = "本地开发数据库，用于开发调试"
 address = "127.0.0.1:3306"
 user = "readonly"
 password_env = "MYSQL_EXPLORER_PASSWORD"
@@ -9,13 +10,19 @@ password_env = "MYSQL_EXPLORER_PASSWORD"
 # 每个连接独立配置；省略 type 时为 mysql，省略 allow_dml 时为 false。
 # type = "mysql"
 # allow_dml = false
+# allow_ddl = false
 
 # TiDB 示例：只在明确指定 type = "tidb" 时启用兼容路径。
 # [[clusters]]
 # name = "TiDB 示例"
+# description = "订单分析 TiDB，供查询与执行计划分析使用"
 # type = "tidb"
 # address = "127.0.0.1:4000"
 # user = "readonly"
 # password_env = "TIDB_EXPLORER_PASSWORD"
 # allow_dml = false
+# allow_ddl = false
 # 仅在需要写入的连接中改为 true；成功执行单条 DML 后自动提交。
+
+# allow_ddl = true 仅允许该连接执行受支持的表、索引或数据库 DDL。
+# DDL 可能隐式提交，不能保证回滚；不会自动启用 DML。

@@ -78,3 +78,48 @@ user='reader'
 		}
 	}
 }
+
+func TestDDLFlag(t *testing.T) {
+	for _, value := range []string{"", "allow_ddl=true", "allow_ddl=false", "allow_ddl='true'"} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		body := `[[clusters]]
+name='test'
+address='localhost:3306'
+user='reader'
+` + value
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Read(path)
+		if value == "allow_ddl='true'" {
+			if err == nil {
+				t.Fatal("string flag accepted")
+			}
+			continue
+		}
+		if err != nil || cfg.Clusters[0].AllowDDL != (value == "allow_ddl=true") || cfg.Clusters[0].AllowDML {
+			t.Fatal("incorrect capability defaults", err)
+		}
+	}
+}
+
+func TestConnectionDescription(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	data := `[[clusters]]
+name='default'
+address='localhost:3306'
+user='reader'
+[[clusters]]
+name='described'
+description='订单归档分析，仅用于报表查询'
+address='localhost:4000'
+user='reader'
+`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Read(path)
+	if err != nil || cfg.Clusters[0].Description != "" || cfg.Clusters[1].Description != "订单归档分析，仅用于报表查询" {
+		t.Fatal("description not preserved", err)
+	}
+}

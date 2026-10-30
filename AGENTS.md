@@ -16,11 +16,12 @@ MySQL Explorer 是使用 Go 实现的默认只读的 MySQL / TiDB 数据浏览�
 - `internal/config/`：命令行参数、默认配置路径与 TOML 配置。
 - `internal/cli/`：只读 CLI、输出格式和 zsh/Bash 动态补全。
 - `internal/mysql/`：连接、元数据缓存、SQL AST 校验、分页和结果转换。
-- `internal/server/`：HTTP 路由、请求校验、超时及错误响应。
+- `internal/server/`：HTTP 路由、MCP Streamable HTTP 工具、共享 SQL 校验/执行入口、超时及错误响应。
 - `internal/web/assets.go`：静态资源嵌入。
 - `internal/web/assets/index.html`：浏览器页面、样式和交互。
 - `frontend/editor.js`：CodeMirror 编辑器和 SQL 格式化源码。
-- `internal/web/assets/editor.js`：生成的编辑器 bundle，修改源码后重新构建，不手工编辑。
+- `frontend/result-grid.js`、`frontend/result-grid.css`：Tabulator 查询结果表格及样式源码。
+- `internal/web/assets/editor.js`、`result-grid.js`、`result-grid.css`：生成的前端 bundle，修改源码后运行 `make web`，不手工编辑。
 - `config.example.toml`：可提交的配置示例。
 - `.github/workflows/release.yml`：标签触发的验证与二进制发布流程。
 
@@ -49,12 +50,14 @@ go run ./cmd/mysql-explorer --config config.toml
 
 ## 必须保持的行为与安全边界
 
-- 连接默认 `type = "mysql"`、`allow_dml = false`。MySQL 的 SELECT 使用只读事务；仅显式 `type = "tidb"` 时使用普通事务并在读取后回滚，不自动降级或开启 TiDB noop 参数。TiDB 只读连接应使用数据库只读账号。
-- 仅 `allow_dml = true` 的连接允许单条 INSERT、REPLACE、UPDATE、DELETE，成功提交，失败尝试回滚；DML 不追加应用分页、不自动重试。DDL、多语句、锁定 SELECT 和未知函数始终拒绝；执行计划仅接受 SELECT。保留 AST 校验、函数白名单、执行注释清除，不执行未经校验的原始 SQL。
+- 连接默认 `type = "mysql"`、`allow_dml = false`、`allow_ddl = false`。MySQL 的 SELECT 使用只读事务；仅显式 `type = "tidb"` 时使用普通事务并在读取后回滚，不自动降级或开启 TiDB noop 参数。TiDB 只读连接应使用数据库只读账号。
+- 仅 `allow_dml = true` 的连接允许单条 INSERT、REPLACE、UPDATE、DELETE，成功提交，失败尝试回滚；DML 不追加应用分页、不自动重试。多语句、锁定 SELECT 和未知函数始终拒绝；执行计划仅接受 SELECT。保留 AST 校验、函数白名单、执行注释清除，不执行未经校验的原始 SQL。
+- 仅 `allow_ddl = true` 的连接允许受支持的表、索引和数据库 DDL；DDL 保留完整定义，不通过旧 AST 重写，不包装事务或自动重试。保留单语句检查和注释拒绝；当前拒绝 CREATE SELECT、视图和存储程序。DDL 可能隐式提交，不能承诺回滚，测试不得在现有真实库中创建或删除对象。
 - 保留分页限制、查询超时和结果大小限制；原 SQL 的 LIMIT/OFFSET 与应用分页组合语义以现有实现和测试为准。
 - 整数与 DECIMAL 使用字符串返回，避免浏览器精度丢失；保留 NULL、二进制、日期时间及同名结果列的现有表示。
 - 字段备注映射应保持结果列顺序，无法确定来源时回退为结果字段名。
 - 各服务独立维护元数据缓存；保持启动预加载、展开数据库更新表名、选择表更新字段和备注、刷新完整元数据的行为。读取失败时保留旧缓存。
+- 连接 `description` 用于说明用途，仅在 CLI `connections` 和 MCP `list_connections` 返回；网页及网页连接 API 不展示或返回，不把描述当成权限依据。
 - 浏览器只接收公开连接信息；HTTP 错误不得暴露密码、DSN 或驱动原始错误。
 - 本地配置、环境变量文件和构建产物遵循 `.gitignore`。应用无内置登录，默认监听回环地址；涉及远程访问的说明应保留认证代理或网络访问控制要求。
 
@@ -62,7 +65,14 @@ go run ./cmd/mysql-explorer --config config.toml
 
 - Go 修改使用 `gofmt` 或 `make fmt`；涉及后端行为时运行 `make check`，交付前按改动范围运行 `make build`。
 - 修复或新增查询、分页、字段映射及 HTTP 行为时，在对应包的 `*_test.go` 中补充必要回归测试，沿用现有测试模式。
-- 修改 `frontend/editor.js` 或前端依赖后运行 `make web`，同步提交源码、`pnpm-lock.yaml`、生成的 bundle 及构建产生的许可证文件。发布 CI 会重建并检查生成文件一致性。
+- 修改 `frontend/` 源码或前端依赖后运行 `make web`，同步提交源码、`pnpm-lock.yaml`、生成的 bundle 及构建产生的许可证文件。发布 CI 会重建并检查生成文件一致性。
 - 页面交互变化应在真实浏览器中验证相关流程，例如表选择、补全、格式化撤销、查询执行、翻页和错误提示。
 - 明确区分单元测试、构建验证、浏览器验证和真实 MySQL 联调；没有执行的检查如实说明，不将 mock 测试或页面加载成功描述为真实数据库联调成功。
 - 行为、配置或开发流程发生变化时同步更新 `README.md`；只有明确要求发布时才推送 `v*` 标签，标签会触发 GitHub Release。
+
+## HTTP 页面、CLI、MCP 三端同步
+
+- 后续新增、修改或删除业务功能时，必须同步检查 HTTP 页面及 API、CLI、MCP 三端，覆盖能力入口、参数与默认值、连接选择、type/allow_dml/allow_ddl 权限、SQL 校验、分页及超时、结果结构和错误脱敏，不能只更新一个入口。
+- 优先复用已有数据库实现及共享校验/执行层；HTTP 与 MCP 的 SQL 执行共用 `internal/server/query.go`，三端均使用 `internal/mysql`，不得为某个入口绕过权限或放宽 SQL 限制。
+- 同步更新命令帮助及补全、MCP 工具描述/输入输出、网页 MCP 配置说明、启动日志和 README。仅某一端适用的交互差异需明确说明，不用虚假工具或空实现凑齐。
+- 交付前验证三端对应行为。MCP 使用真实 Streamable HTTP 客户端完成握手、工具发现和调用；涉及写入时使用 mock/隔离测试，不在现有真实库执行 DML/DDL。未验证或不适用的部分必须明确列出。

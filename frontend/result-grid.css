@@ -1,0 +1,33 @@
+.grid-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-bottom: 1px solid #eaecf0; }
+.grid-hint { flex: 1 1 300px; font-size: 11px; color: #667085; line-height: 1.7; }
+.grid-feedback { font-size: 11px; color: #175cd3; }
+.grid-columns { position: relative; font-size: 12px; }
+.grid-columns summary { cursor: pointer; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 7px; color: #344054; }
+.grid-column-options { position: absolute; right: 0; top: 100%; z-index: 20; background: white; border: 1px solid #eaecf0; border-radius: 8px; box-shadow: 0 6px 20px #10182820; padding: 8px; width: min(300px, 70vw); max-height: 260px; overflow: auto; }
+.grid-column-options label { display: flex; align-items: start; gap: 6px; padding: 7px; color: #344054; overflow-wrap: anywhere; }
+.tabulator { border: 0; background: white; color: #344054; font-size: 12px; }
+.tabulator .tabulator-header { border-bottom: 1px solid #d0d5dd; background: #f9fafb; color: #475467; }
+.tabulator .tabulator-header .tabulator-col { background: #f9fafb; border-right: 1px solid #eaecf0; }
+.tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding: 10px 12px; }
+.tabulator .tabulator-header .tabulator-col small { display: block; font-size: 10px; color: #667085; margin-top: 4px; font-weight: 400; }
+.tabulator-row { background: white; min-height: 38px; }
+.tabulator-row.tabulator-row-even { background: #fcfcfd; }
+.tabulator-row .tabulator-cell { padding: 9px 12px; border-right: 1px solid #f2f4f7; border-bottom: 1px solid #eaecf0; font: 12px/1.6 ui-monospace, monospace; }
+.tabulator-row .tabulator-cell.tabulator-frozen { background: #f9fafb; color: #667085; }
+.tabulator .tabulator-range-overlay .tabulator-range { border-color: #1677ff; }
+.tabulator-row .tabulator-cell.tabulator-range-selected { background: #e6f4ff; }
+.grid-cell-dialog { width: min(800px, 92vw); padding: 20px; border: 1px solid #d0d5dd; border-radius: 12px; color: #344054; box-shadow: 0 20px 60px #10182840; }
+.grid-cell-dialog::backdrop { background: #10182866; }
+.grid-cell-dialog h2 { font-size: 15px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.grid-cell-dialog textarea { display: block; width: 100%; height: min(50vh, 420px); resize: vertical; margin-bottom: 12px; padding: 12px; border: 1px solid #d0d5dd; border-radius: 7px; font: 12px/1.7 ui-monospace, monospace; }
+@media (max-width: 680px) { .grid-toolbar { padding: 10px; } }
+
+.grid-horizontal-scroll { display: flex; align-items: center; gap: 12px; padding: 7px 14px; border-bottom: 1px solid #eaecf0; background: #f9fafb; font-size: 11px; color: #667085; }
+.grid-horizontal-scroll[hidden] { display: none; }
+.grid-horizontal-scroll span { white-space: nowrap; }
+.grid-horizontal-scroll input { flex: 1; min-width: 0; width: 100%; height: 16px; margin: 0; cursor: ew-resize; appearance: none; background: transparent; }
+.grid-horizontal-scroll input::-webkit-slider-runnable-track { height: 8px; background: #e4e7ec; border-radius: 4px; }
+.grid-horizontal-scroll input::-webkit-slider-thumb { appearance: none; width: 40px; height: 12px; margin-top: -2px; border-radius: 6px; background: #667085; border: 1px solid white; }
+.grid-horizontal-scroll input::-moz-range-track { height: 8px; background: #e4e7ec; border-radius: 4px; }
+.grid-horizontal-scroll input::-moz-range-thumb { width: 40px; height: 12px; border-radius: 6px; background: #667085; border: 1px solid white; }
+.grid-horizontal-scroll input:focus-visible { outline: 2px solid #1677ff; outline-offset: 3px; border-radius: 4px; }

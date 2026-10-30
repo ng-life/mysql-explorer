@@ -212,17 +212,23 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if o.command == "connections" {
 		type connection struct {
-			Name    string `json:"name"`
-			Address string `json:"address"`
-			User    string `json:"user"`
+			Name     string `json:"name"`
+			Address  string `json:"address"`
+			User     string `json:"user"`
+			Type     string `json:"type"`
+			AllowDML bool   `json:"allow_dml"`
 		}
 		out := []connection{}
 		rows := [][]any{}
 		for _, cl := range c.Clusters {
-			out = append(out, connection{cl.Name, cl.Address, cl.User})
-			rows = append(rows, []any{cl.Name, cl.Address, cl.User})
+			out = append(out, connection{cl.Name, cl.Address, cl.User, cl.Type, cl.AllowDML})
+			dml := "关闭"
+			if cl.AllowDML {
+				dml = "开启"
+			}
+			rows = append(rows, []any{cl.Name, cl.Address, cl.User, cl.Type, dml})
 		}
-		return output(o.format, stdout, stderr, out, []string{"名称", "地址", "用户"}, rows)
+		return output(o.format, stdout, stderr, out, []string{"名称", "地址", "用户", "类型", "允许 DML"}, rows)
 	}
 	id, err := selectConnection(c, o.connection)
 	if err != nil {

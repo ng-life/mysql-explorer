@@ -253,3 +253,50 @@ func TestCLIDMLResult(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectionsCapabilitiesOffline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	fixture := `[[clusters]]
+name='default-mysql'
+address='127.0.0.1:1'
+user='reader'
+password='private-fixture'
+[[clusters]]
+name='explicit-tidb'
+address='127.0.0.1:1'
+user='writer'
+type='tidb'
+allow_dml=true
+`
+	if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"json", "table"} {
+		var out, errs bytes.Buffer
+		code := Run(context.Background(), []string{"connections", "--config", path, "--format", format}, strings.NewReader(""), &out, &errs)
+		if code != 0 || errs.Len() != 0 || strings.Contains(out.String(), "private-fixture") {
+			t.Fatal(code, errs.String())
+		}
+		if format == "json" {
+			var rows []struct {
+				Type     string `json:"type"`
+				AllowDML bool   `json:"allow_dml"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 2 || rows[0].Type != "mysql" || rows[0].AllowDML || rows[1].Type != "tidb" || !rows[1].AllowDML {
+				t.Fatal(out.String())
+			}
+			if !strings.Contains(out.String(), `"allow_dml": false`) {
+				t.Fatal("default false must be explicit", out.String())
+			}
+		} else {
+			for _, want := range []string{"类型", "允许 DML", "mysql", "tidb", "开启", "关闭"} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatal("missing", want, out.String())
+				}
+			}
+		}
+	}
+}

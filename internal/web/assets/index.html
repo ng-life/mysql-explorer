@@ -153,6 +153,7 @@
         border-color: #d1e0ff;
       }
       .cluster-text {
+        flex: 1;
         min-width: 0;
       }
       .cluster-name {
@@ -171,6 +172,25 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+      .cluster-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 7px;
+      }
+      .cluster-tag {
+        font-size: 10px;
+        line-height: 1.5;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: #f2f4f7;
+        color: #475467;
+        white-space: nowrap;
+      }
+      .cluster-tag.writable {
+        background: #fffaeb;
+        color: #93370d;
       }
       .tree-head {
         display: flex;
@@ -725,7 +745,7 @@
             ? clusters
                 .map(
                   (c, i) =>
-                    `<button class="cluster" data-id="${i}"><span class="cluster-icon">◈</span><span class="cluster-text"><div class="cluster-name">${esc(c.name)}</div><div class="cluster-host">${esc(c.address)}</div></span></button>`,
+                    `<button class="cluster" data-id="${i}"><span class="cluster-icon">◈</span><span class="cluster-text"><div class="cluster-name">${esc(c.name)}</div><div class="cluster-host">${esc(c.address)}</div><div class="cluster-tags"><span class="cluster-tag" title="type = ${c.type === "tidb" ? "tidb" : "mysql"}">${c.type === "tidb" ? "TiDB" : "MySQL"}</span><span class="cluster-tag ${c.allow_dml === true ? "writable" : ""}" title="allow_dml = ${c.allow_dml === true}">DML ${c.allow_dml === true ? "开启" : "关闭"}</span></div></span></button>`,
                 )
                 .join("")
             : '<div class="tree-state">未配置服务，请在 config.toml 中添加连接。</div>';

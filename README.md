@@ -37,7 +37,7 @@ password_env = "MYSQL_EXPLORER_PASSWORD"
 
 ## 连接类型与 DML
 
-每个 `[[clusters]]` 独立配置，Web 和 CLI 使用同一策略。修改配置后需重启 Web 服务；CLI 下次运行读取新配置。
+每个 `[[clusters]]` 独立配置，Web 和 CLI 使用同一策略。Web 的 SERVICES 列表显示每个连接的 MySQL / TiDB 类型与 DML 开启、关闭标签；CLI 的 `connections` 表格显示「类型」「允许 DML」，JSON 输出包含 `type` 字符串和 `allow_dml` 布尔字段。修改配置后需重启 Web 服务；CLI 下次运行读取新配置。
 
 ```toml
 [[clusters]]

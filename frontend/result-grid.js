@@ -7,6 +7,12 @@ const valueText = (value) =>
 const escapeHTML = (value) => String(value).replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[c]);
+// 单元格值一律是字符串，无法根据内容可靠判断数值（如 "0012"、"1e3"），
+// 因此按元数据里的字段类型决定右对齐；BIT 存储的是位串，保持左对齐。
+// 类型可能带精度和修饰，如 "bigint(20) unsigned"、"UNSIGNED BIGINT"、"DOUBLE PRECISION"。
+const NUMERIC_TYPE = /^(tinyint|smallint|mediumint|int|integer|bigint|decimal|numeric|float|double|real|year)\b/;
+const numericColumn = (type) =>
+  NUMERIC_TYPE.test(String(type || "").toLowerCase().split("(")[0].replace(/\bunsigned\b/, "").trim());
 
 // SQL columns are positional: duplicate names and names containing dots must
 // never become object keys. Values remain strings/null, preserving precision.
@@ -91,29 +97,35 @@ window.createResultGrid = (container, columns, rows, skip = 0) => {
       headerSort: false, resizable: true, minWidth: 110, width: 180,
       editable: false,
     },
-    columns: columns.map((column, i) => ({
-      field: "c" + i,
-      title: escapeHTML(column.comment || column.name),
-      titleFormatter: () => {
-        const title = document.createElement("div");
-        title.textContent = column.comment || column.name;
-        title.title = column.name + " · " + (column.type || "") + (column.comment ? " · " + column.comment : "");
-        if (column.comment) {
-          const name = document.createElement("small");
-          name.textContent = column.name;
-          title.append(name);
-        }
-        return title;
-      },
-      formatter: (cell) => {
-        const value = cell.getValue();
-        const span = document.createElement("span");
-        span.textContent = value === "" ? '\"\"' : valueText(value);
-        if (value === null) span.className = "cell-null";
-        return span;
-      },
-      accessorClipboard: (value) => valueText(value),
-    })),
+    columns: columns.map((column, i) => {
+      const numeric = numericColumn(column.type);
+      return {
+        field: "c" + i,
+        title: escapeHTML(column.comment || column.name),
+        titleFormatter: () => {
+          const title = document.createElement("div");
+          title.textContent = column.comment || column.name;
+          title.title = column.name + " · " + (column.type || "") + (column.comment ? " · " + column.comment : "");
+          if (column.comment) {
+            const name = document.createElement("small");
+            name.textContent = column.name;
+            title.append(name);
+          }
+          return title;
+        },
+        // 数字列右对齐便于按位比较大小，表头跟随列内容对齐
+        hozAlign: numeric ? "right" : "left",
+        headerHozAlign: numeric ? "right" : "left",
+        formatter: (cell) => {
+          const value = cell.getValue();
+          const span = document.createElement("span");
+          span.textContent = value === "" ? '\"\"' : valueText(value);
+          if (value === null) span.className = "cell-null";
+          return span;
+        },
+        accessorClipboard: (value) => valueText(value),
+      };
+    }),
   });
   const firstCell = () => grid.getRanges()[0]?.getCells()[0]?.find((cell) => cell.getField()?.startsWith("c"));
   const updateSelection = () => {
